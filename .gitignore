@@ -50,3 +50,6 @@ venv/
 !*.tfvars.example
 crash.log
 .terraform.lock.hcl.bak
+
+# Office lock files
+~$*
