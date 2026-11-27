@@ -1,6 +1,6 @@
-# CreditMate – Project Brief and Handoff Document
+# CredAIble – Project Brief and Handoff Document
 
-> Status: Phase 1 (Requirement Interrogation) complete for round 1; round 2 and architecture-review questions answered or deferred; assumptions A-01..A-35 accepted on 2026-11-22 (D-44). Origination channels, customer identity and product extensibility decided on 2026-11-27 (D-45..D-56, A-36..A-44). Ready for detailed design.
+> Status: Phase 1 (Requirement Interrogation) complete for round 1; round 2 and architecture-review questions answered or deferred; assumptions A-01..A-35 accepted on 2026-11-22 (D-44). Origination channels, customer identity and product extensibility decided on 2026-11-27 (D-45..D-56, A-36..A-44). Technology stack, process model, packaging and value dashboard decided on 2026-11-27 (D-57..D-65), and the product named CredAIble (D-66); see `TECHNICAL_DESIGN.md`. Ready for detailed design.
 > Last updated: 2026-11-27
 > Audience: any AI agent or human architect continuing this work. This file is self-contained.
 
@@ -28,7 +28,7 @@ This is a **commercial software product**, not a one-off application. Optimise f
 
 | Item | Value |
 |---|---|
-| Working name | CreditMate |
+| Product name | CredAIble (D-66; earlier working names CreditMate and CreditmAIte) |
 | Product | Agentic-AI Credit Origination and Assessment Platform, launching with unsecured personal loans |
 | Scope | Complete Loan Origination System (LOS). Personal loans first, credit cards next, then vehicle and home loans, all through product configuration (D-54, D-56) |
 | Origination channels | Broker (portal, partner API, later LIXI2), lender branch or relationship manager (RM), and direct web and mobile (D-45) |
@@ -150,6 +150,16 @@ Each area is tagged with its status for this product. "P1" = Phase 1, "P2" = Pha
 | D-54 | Credit products are defined as versioned configuration: type, secured or unsecured, term or revolving credit, collateral schema, document checklist, rule set, workflow, agent set, affordability method and handoff mapping. The data model includes Originator and Collateral from the first release | Channel review |
 | D-55 | Broker documents arrive in stages: broker portal upload in Phase 1, then a partner API document endpoint, then a LIXI2 inbound adapter at the edge. LIXI is mapped to the canonical intake and never becomes the internal model | Channel review |
 | D-56 | Phase 1 delivers personal loans only. Credit cards are the next product and must be addable mainly by configuration, plus card-specific rules and handoff. Vehicle and home loans follow | Channel review |
+| D-57 | Two server languages: Java (Spring Boot) for core services, Python only in sandboxed AI and document workers with no data credentials. TypeScript is used in browsers only | Tech stack review, 2026-11-27 |
+| D-58 | The route an application takes is deterministic and comes from the versioned product definition. AI agents work inside steps and may add steps from an allowed catalogue, but never skip, reorder or bypass a required step | Tech stack review |
+| D-59 | Temporal, self-hosted on PostgreSQL, is the workflow engine. Resolves ADR-004 | Tech stack review |
+| D-60 | Installation uses three profiles (Enterprise, Standard, Evaluation) with a defined split of lender-provided, bundled and either-side services, and a preflight check before install and every upgrade | Tech stack review |
+| D-61 | CredAIble does not resell model, OCR, bureau or identity providers for now. The lender contracts them directly; CredAIble supplies adapters and evaluation | Tech stack review |
+| D-62 | Document extraction is layered: text layer first, OCR only for scans, LLM understanding over text (vision only when needed), then grounding and arithmetic checks, a vision second read and an indexer | Tech stack review |
+| D-63 | Consumer Data Right bank data and disconnected installs with self-hosted models are later phases | Tech stack review |
+| D-64 | The value dashboard (turnaround, staff effort, cost per application, extraction accuracy against a baseline) is in the first release | Pitch review, 2026-11-27 |
+| D-65 | Positioning: an AI-assisted credit origination tool that makes decisions faster, saves staff time and lowers cost, with a person always deciding | Pitch review |
+| D-66 | The product name is **CredAIble**. It replaces the working names CreditMate and CreditmAIte in all documents, diagrams and pitch material | Brand review, 2026-11-28 |
 
 ---
 
@@ -200,7 +210,7 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | A-39 | Link and lapse settings are configuration with reference values: link valid for 7 days, reminders on days 2, 5 and 7, one-time code valid for 10 minutes with 5 attempts, lapse proposed 30 days after the last outstanding request. The lender approves them before production (A-35) | D-47 | Proposed |
 | A-40 | Applicant and broker uploads stream through the public gateway into the quarantined staging store. The document repository is never reachable from the internet, and no pre-signed repository URL is issued to an external party | D-47, A-28, DG-03 | Proposed |
 | A-41 | Branch and RM users are lender staff in the staff realm with an Originator role. Branch devices reach the back office over the lender's private network or zero-trust access, never through the public portal | D-45, D-50 | Proposed |
-| A-42 | In built-in registry mode CreditMate is the system of record for customer identity. It must support access and correction requests (APPs 12 and 13) and data-quality controls. It is not a full CRM | D-53 | Proposed |
+| A-42 | In built-in registry mode CredAIble is the system of record for customer identity. It must support access and correction requests (APPs 12 and 13) and data-quality controls. It is not a full CRM | D-53 | Proposed |
 | A-43 | Matching uses configurable deterministic rules first: lender customer number, verified identity document, or verified contact plus date of birth. Probabilistic scores only propose a match for human confirmation | D-52, D-53 | Proposed |
 | A-44 | The canonical credit request supports term credit (amount and term) and revolving credit (limit) from the first release, so credit cards need no schema migration | D-54, D-56 | Proposed |
 
@@ -222,7 +232,7 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | C-10 | Single-tenant per customer means many installations; release/upgrade tooling becomes critical | Open (design) |
 | C-11 | Brokers submit on the applicant's behalf but cannot consent for them, so bureau and AI work must wait for the applicant | Resolved by D-46 |
 | C-12 | An emailed link is a bearer credential that can be forwarded or phished | Mitigated by D-47 and A-38 |
-| C-13 | "Create a customer ID" assumes CreditMate is the customer master, which is not true for lenders with core banking | Resolved by D-53 |
+| C-13 | "Create a customer ID" assumes CredAIble is the customer master, which is not true for lenders with core banking | Resolved by D-53 |
 | C-14 | Broker platforms vary in what they send, and LIXI2 attachment support is unconfirmed | Staged by D-55; open as OQ-15 |
 
 ---
@@ -363,7 +373,7 @@ ADRs are tracked in `ARCHITECTURE_DRAFT.md` section 22. Add new records there an
 ## 12. Work plan for the next agent
 
 1. **Track open items.** Sections 8.1 to 8.4 are answered or assumed; section 8.5 lists what is still open.
-2. **Review and refine** `ARCHITECTURE_DRAFT.md` (v0.5). Check it against decisions D-01..D-56 and assumptions A-01..A-44, and confirm or amend the proposed assumptions A-36..A-44.
+2. **Review and refine** `ARCHITECTURE_DRAFT.md` (v0.5). Check it and `TECHNICAL_DESIGN.md` (v0.1) against decisions D-01..D-66 and assumptions A-01..A-44, and confirm or amend the proposed assumptions A-36..A-44.
 3. **Produce detailed design artefacts**, in this order:
    - Domain model and metadata schema (ERD)
    - Agent contract and registry specification
