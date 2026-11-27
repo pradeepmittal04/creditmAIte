@@ -1,4 +1,4 @@
-# CreditMate - Architecture Diagrams v0.3
+# CredAIble - Architecture Diagrams v0.3
 
 > Status: DRAFT, 2026-11-27. For architects, engineers, and lender infrastructure and security teams.
 > Based on `ARCHITECTURE_DRAFT.md` v0.5, `DOMAIN_MODEL.md` v0.3 and the decisions (D-xx) and assumptions (A-xx) in `PROJECT_BRIEF.md`.
@@ -42,7 +42,7 @@ flowchart TB
   STAFF["Lender staff and branch RMs<br/>Indexer, Assessor, Checker,<br/>BA Admin, Auditor, Support"]:::human
 
   subgraph LENDER["Lender infrastructure"]
-    subgraph PRODUCT["CreditMate"]
+    subgraph PRODUCT["CredAIble"]
       PUB["Public channels<br/>applicant and broker portals"]:::core
       PARTG["Partner API<br/>mTLS, separate gateway"]:::prop
       INT["Back-office application<br/>branch capture, SAML or OIDC"]:::core
@@ -683,7 +683,7 @@ flowchart TB
     E3["New customer created by master<br/>at handoff, ID returned"]:::ext
   end
 
-  subgraph BLT["BUILT_IN: CreditMate is master"]
+  subgraph BLT["BUILT_IN: CredAIble is master"]
     B1["Search built-in registry"]:::core
     B2["Create Customer and<br/>CustomerIdentifier"]:::core
   end
@@ -936,7 +936,7 @@ Anything not listed is denied, apart from cluster DNS.
 - **Results:** a synchronous response or polling is the default. Callbacks are enabled for a provider only where it requires them.
 - **Callbacks:** the adapter verifies the sender and rejects replays. The Tool Broker matches the result to an outstanding request through core-api, which saves it and signals the workflow. The provider is acknowledged only after the save. A missing callback is reconciled, not treated as a clean result.
 - **Retries:** no layer automatically resends a bureau enquiry unless A-30 is met. This covers the workflow engine, adapter, service mesh, egress proxy and lender gateway.
-- **Lender gateway:** it does not replace the Tool Broker. The lender confirms the final provider, processing region and payload logging, because CreditMate cannot observe them.
+- **Lender gateway:** it does not replace the Tool Broker. The lender confirms the final provider, processing region and payload logging, because CredAIble cannot observe them.
 
 Vendor support has no standing path. Access is time-limited, lender-approved break-glass (A-08).
 

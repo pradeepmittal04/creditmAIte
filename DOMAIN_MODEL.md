@@ -1,7 +1,7 @@
-# CreditMate - Domain Model and Metadata Schema v0.3
+# CredAIble - Domain Model and Metadata Schema v0.3
 
 > Status: DRAFT for review, 2026-11-27.
-> Audience: architects and engineers building CreditMate.
+> Audience: architects and engineers building CredAIble.
 > Built on `PROJECT_BRIEF.md` (D-01..D-56, A-01..A-44) and `ARCHITECTURE_DRAFT.md` v0.5.
 > v0.2 adds what the source research for `REFERENCE_POLICY.md` showed was missing.
 > v0.3 adds origination channels, secure applicant access, document requests, the Customer Registry, product definitions and collateral (D-45..D-56). `Broker` is replaced by `Originator` and `OriginatorUser`, and `LoanRequest` by `CreditRequest`.
@@ -315,7 +315,7 @@ For a reused-document signal, the evidence is the current document plus an opaqu
 | Entity | Key fields | Class | Rules |
 |---|---|---|---|
 | Customer | customerId, status (PROSPECT, CUSTOMER, MERGED, CLOSED), mergedIntoId?, primaryPartySnapshotRef | S | Built-in and hybrid modes only. A merge is a recorded human action (D-53) |
-| CustomerIdentifier | identifierId, customerId, system (CREDITMATE, CORE_BANKING, CRM, CARD_PLATFORM, OTHER), externalRef, state (ACTIVE, RETIRED), source | P | The ID-mapping table. Unique per system and reference |
+| CustomerIdentifier | identifierId, customerId, system (CREDAIBLE, CORE_BANKING, CRM, CARD_PLATFORM, OTHER), externalRef, state (ACTIVE, RETIRED), source | P | The ID-mapping table. Unique per system and reference |
 | CustomerLink | linkId, partyId, mode (EXTERNAL, BUILT_IN, HYBRID), customerId?, externalSystemId?, externalCustomerRef?, state (UNRESOLVED, PROPOSED, CONFIRMED, NEW_AT_HANDOFF, REJECTED), method (DETERMINISTIC_RULE, STAFF_CONFIRMED, CREATED), ruleVersion, confirmedBy? | S | At most one CONFIRMED link per party |
 | MatchCandidate | candidateId, linkId, candidateRef (opaque), score, matchedOn[], ruleVersion, outcome (PROPOSED, ACCEPTED, REJECTED), decidedBy? | S | Shows matched field names, not the other person's values, until an authorised user opens it |
 

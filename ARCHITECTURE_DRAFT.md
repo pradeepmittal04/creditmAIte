@@ -1,10 +1,10 @@
-# CreditMate - Architecture Draft v0.5
+# CredAIble - Architecture Draft v0.5
 
-> Status: DRAFT, refreshed 2026-11-27. Built on `PROJECT_BRIEF.md` (decisions D-01..D-56, assumptions A-01..A-44, open questions OQ-xx).
+> Status: DRAFT, refreshed 2026-11-27. Built on `PROJECT_BRIEF.md` (decisions D-01..D-66, assumptions A-01..A-44, open questions OQ-xx).
 > v0.5 adds origination channels, applicant access, the Customer Registry, product definitions and internet trust zones (section 27).
 > All assumptions were accepted, amended or superseded on 2026-11-22 (D-44); see section 25.
 > Review findings (RF-xx) and the questions arising from the review are in section 26.
-> Technology names are **proposals** pending ADR approval (section 22). Nothing here is legal advice.
+> Technology names are **proposals** pending ADR approval (section 22). The technology stack and engineering conventions are in `TECHNICAL_DESIGN.md`. Nothing here is legal advice.
 
 ---
 
@@ -754,16 +754,16 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 |---|---|---|---|
 | ADR-001 | Single-tenant dedicated deployment per customer | Accepted | D-12, D-35 |
 | ADR-002 | Human-final-decision; no auto-decision path | Accepted | D-06, D-15 |
-| ADR-003 | PostgreSQL for metadata and ledger (hash-chained) | Proposed | |
-| ADR-004 | Workflow engine (Temporal vs Postgres-backed) | Proposed | Decide with operations burden for customer-run clusters |
-| ADR-005 | Rules engine (DMN-based, open source) | Proposed | |
-| ADR-006 | Eventing (outbox + lightweight broker vs workflow-only) | Proposed | |
-| ADR-007 | Authorization engine (OPA vs built-in) | Proposed | |
+| ADR-003 | PostgreSQL for metadata and ledger (hash-chained) | Proposed, recommended | PostgreSQL 17+ also holds outbox, Temporal, search and vectors (TDD section 11) |
+| ADR-004 | Workflow engine (Temporal vs Postgres-backed) | Accepted | Temporal, self-hosted on PostgreSQL (D-59, TDD section 7) |
+| ADR-005 | Rules engine (DMN-based, open source) | Proposed, recommended | Apache KIE (Drools) DMN; Operaton as fallback |
+| ADR-006 | Eventing (outbox + lightweight broker vs workflow-only) | Proposed, recommended | Transactional outbox, no internal broker; Kafka only for handoff |
+| ADR-007 | Authorization engine (OPA vs built-in) | Proposed, recommended | OPA for policy; hard invariants in code |
 | ADR-008 | Default document repository: S3-compatible | Accepted | Direction set by D-30; product choice open (RF-05) |
-| ADR-009 | Model Gateway: custom thin gateway with capability model (build) vs adopt open-source proxy | Proposed | Evaluate lock-in and capability pass-through |
-| ADR-010 | OCR provider default | Proposed | D-30 sets no default cloud; depends on AU processing (D-31) and accuracy testing |
-| ADR-011 | Observability stack: OpenTelemetry with optional bundled reference | Proposed | |
-| ADR-012 | Agents communicate only through orchestrator | Proposed | |
+| ADR-009 | Model Gateway: custom thin gateway with capability model (build) vs adopt open-source proxy | Proposed, recommended | Build a thin Java gateway (TDD section 9) |
+| ADR-010 | OCR provider default | Proposed | No single default; OCR only for scans under layered extraction (ADR-036); lender AU cloud OCR, or PaddleOCR or Tesseract |
+| ADR-011 | Observability stack: OpenTelemetry with optional bundled reference | Proposed, recommended | TDD section 17 |
+| ADR-012 | Agents communicate only through orchestrator | Accepted | D-58; enforced by Temporal activities and the tool-broker |
 | ADR-013 | External identity realm for applicants and brokers | Accepted | D-22, A-24 |
 | ADR-014 | Personal data held outside the hash chain | Accepted | D-39, A-27 |
 | ADR-015 | Durable-write acknowledgement boundary | Accepted | D-11, A-28 |
@@ -772,7 +772,7 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 | ADR-018 | Tenant-aware design within single-tenant deployments | Accepted | D-36, A-32 |
 | ADR-019 | Canonical handoff with pluggable channels | Accepted | D-37, A-34 |
 | ADR-020 | Reference policy as versioned configuration data | Accepted | D-38, A-35 |
-| ADR-021 | Identity broker for SAML and OIDC federation | Proposed | D-41 |
+| ADR-021 | Identity broker for SAML and OIDC federation | Proposed, recommended | D-41; Keycloak with staff, external and partner realms |
 | ADR-022 | Fraud screening: forensic tools plus agent that cannot lower tool signals | Accepted | D-40, A-03 |
 | ADR-023 | Configurable verdict maker-checker | Accepted | D-42 |
 | ADR-024 | Retention hooks only, no policy engine | Accepted | D-39 |
@@ -784,6 +784,18 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 | ADR-030 | Internet trust zones and separate partner gateway | Proposed | A-36, A-37, A-40 |
 | ADR-031 | LIXI2 mapped at the edge, never the internal model | Accepted | D-55; OQ-15 |
 | ADR-032 | Partner authentication with mTLS-bound OAuth client credentials | Proposed | A-37 |
+| ADR-033 | Two languages: Java core, Python AI workers | Accepted | D-57 |
+| ADR-034 | Deterministic route, agentic steps (agents add, never skip) | Accepted | D-58 |
+| ADR-035 | Install profiles (Enterprise, Standard, Evaluation) and preflight | Accepted | D-60 |
+| ADR-036 | Layered document extraction | Accepted | D-62 |
+| ADR-037 | Licence policy for shipped components | Proposed | TDD section 3 |
+| ADR-038 | Supply chain: signing, SBOM, SLSA, VEX, vulnerability SLA | Proposed | TDD section 16 |
+| ADR-039 | Gateways on Envoy Gateway and Gateway API | Proposed | ADR-030 |
+| ADR-040 | Secrets and application encryption (External Secrets, Tink, lender KMS) | Proposed | TDD 11.4 (encryption) |
+| ADR-041 | Value dashboard from ledger and outbox events | Accepted | D-64 |
+| ADR-042 | No reselling of model and OCR providers | Accepted | D-61 |
+
+Technology choices, conventions and details for these ADRs are in `TECHNICAL_DESIGN.md` (TDD) v0.1.
 
 ---
 
@@ -869,7 +881,7 @@ Accepted on 2026-11-22 (D-44). `PROJECT_BRIEF.md` section 6 holds the authoritat
 
 ## 27. Channels and intake
 
-This section covers how applications enter CreditMate on every route, how the applicant is reached securely, how applicants are matched to customers, how products are defined, and where the internet boundaries are. The diagrams are in `ARCHITECTURE_DIAGRAMS.md` sections 2E–2J and 3D. The entities are in `DOMAIN_MODEL.md` sections 4.13–4.15.
+This section covers how applications enter CredAIble on every route, how the applicant is reached securely, how applicants are matched to customers, how products are defined, and where the internet boundaries are. The diagrams are in `ARCHITECTURE_DIAGRAMS.md` sections 2E–2J and 3D. The entities are in `DOMAIN_MODEL.md` sections 4.13–4.15.
 
 ### 27.1 Principles
 
@@ -877,7 +889,7 @@ This section covers how applications enter CreditMate on every route, how the ap
 2. **Only the applicant consents** (D-46). Nothing that uses bureau, identity provider or AI processing runs before each party's own consent.
 3. **The link is not the credential** (D-47). A link only identifies an invitation; access needs a one-time code, and the session is scoped to one application and party.
 4. **The application number is a reference, never a key** (A-38).
-5. **CreditMate does not assume it is the customer master** (D-53).
+5. **CredAIble does not assume it is the customer master** (D-53).
 6. **Products are data** (D-54). A new product is a new configuration version, not a code branch.
 7. **Each audience has its own entry point** (A-36). Applicants, brokers, partner systems and staff never share a gateway or identity realm.
 
@@ -989,8 +1001,8 @@ Verification is document-based on every route (D-49). The lender's AML/CTF progr
 | Mode | For | Customer ID | Behaviour |
 |---|---|---|---|
 | EXTERNAL | Lenders with core banking or a CRM as customer master | Created by the master, normally at handoff | Search and match through the adapter. New customers are returned in the handoff acknowledgement and stored as `CustomerIdentifier` |
-| BUILT_IN | Small lenders without a customer master | CreditMate `customerId` | CreditMate holds customers and supports access and correction (A-42). It is not a CRM |
-| HYBRID | Lenders migrating or with a partial master | Both, mapped | CreditMate holds the mapping table and syncs with the master |
+| BUILT_IN | Small lenders without a customer master | CredAIble `customerId` | CredAIble holds customers and supports access and correction (A-42). It is not a CRM |
+| HYBRID | Lenders migrating or with a partial master | Both, mapped | CredAIble holds the mapping table and syncs with the master |
 
 - At intake every party is an application-scoped prospect. Resolution creates a `CustomerLink`.
 - Deterministic rules confirm a link automatically: lender customer number from a customer session, verified identity document number, or verified contact plus date of birth (A-43). Anything weaker only proposes a match for staff (INV-29).

@@ -1,4 +1,4 @@
-# CreditMate - Australian Personal Loan Reference Policy v0.1
+# CredAIble - Australian Personal Loan Reference Policy v0.1
 
 > Status: DRAFT, inactive until a lender reviews and approves it (A-35). Sources checked 2026-11-22.
 > Audience: lender Business Admins, credit and compliance staff, and the engineers who will encode these rules.
@@ -12,9 +12,9 @@
 | **Statutory** | Required by legislation in the cited section | Not without counsel. It may be made stricter where lawful |
 | **Guidance** | The regulator's published expectation | Yes, with a recorded reason |
 | **Market** | Published by at least two of the three lenders sampled | Yes |
-| **Illustrative** | Proposed by CreditMate as a starting point. No authority behind the value | Yes, and it should be calibrated |
+| **Illustrative** | Proposed by CredAIble as a starting point. No authority behind the value | Yes, and it should be calibrated |
 | **Lender choice** | No default is proposed. The lender must choose | Yes, required |
-| **Product control** | A CreditMate control from the project brief | No |
+| **Product control** | A CredAIble control from the project brief | No |
 
 Outcomes:
 
