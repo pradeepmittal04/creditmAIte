@@ -1,6 +1,7 @@
-# CreditMate - Architecture Draft v0.4
+# CreditMate - Architecture Draft v0.5
 
-> Status: DRAFT, refreshed 2026-11-22. Built on `PROJECT_BRIEF.md` (decisions D-01..D-44, assumptions A-01..A-35, open questions OQ-xx).
+> Status: DRAFT, refreshed 2026-11-27. Built on `PROJECT_BRIEF.md` (decisions D-01..D-56, assumptions A-01..A-44, open questions OQ-xx).
+> v0.5 adds origination channels, applicant access, the Customer Registry, product definitions and internet trust zones (section 27).
 > All assumptions were accepted, amended or superseded on 2026-11-22 (D-44); see section 25.
 > Review findings (RF-xx) and the questions arising from the review are in section 26.
 > Technology names are **proposals** pending ADR approval (section 22). Nothing here is legal advice.
@@ -31,6 +32,11 @@
 | Internal enterprise users | D-41, D-42 | SAML and OIDC SSO; configurable maker-checker verdict |
 | Customer-owned retention | D-39 | Hooks only, no policy or scheduler |
 | Document fraud screening | D-40 | Deterministic forensics plus an AI screening agent; signal only |
+| Several origination routes | D-45, D-55 | One canonical intake behind broker, branch, direct and partner channels (section 27) |
+| Applicant-only consent | D-46, D-47 | Consent gate before bureau, identity or AI work; secure link with one-time code |
+| Customer master varies by lender | D-53 | Pluggable Customer Registry: external, built-in or hybrid |
+| Cards and secured loans next | D-54, D-56 | Products as versioned configuration; term and revolving credit in the canonical model |
+| Many internet-facing entry points | A-36..A-40 | Separate trust zones, gateways and identity realms per audience |
 
 Quality attribute priorities: Auditability > Security > Configurability > Model/vendor independence > Resilience > Cost control > Scalability.
 
@@ -40,7 +46,10 @@ Quality attribute priorities: Auditability > Security > Configurability > Model/
 
 | Capability | Phase 1 | Deferred / Phase 2 | Out of scope | Source |
 |---|---|---|---|---|
-| Channels | Applicant/broker portal, partner API, back-office app | | | D-22 |
+| Channels | Broker portal, applicant portal (web, mobile-responsive), partner API, back-office app including branch/RM capture | LIXI2 inbound, native mobile app, dealer channel | | D-22, D-45, D-55 |
+| Applicant access | Secure link with one-time code, optional account, lender customer sign-in (if OQ-17 allows) | | | D-47, D-51 |
+| Customer identity | Customer Registry in external, built-in or hybrid mode; duplicate review | | Full CRM | D-52, D-53 |
+| Products | Unsecured personal loan as product configuration | Credit card, then vehicle and home loans | | D-54, D-56 |
 | Intake | Application intake and document ingestion | | | D-03, D-10 |
 | Disclosures | Presentation and recording | | | D-22 |
 | Applicants | Multi-applicant schema (A-25) | Joint and self-employed policy | | D-24 |
@@ -72,12 +81,17 @@ The diagram below is a simplified logical view. See `ARCHITECTURE_DIAGRAMS.md` s
 ```mermaid
 flowchart TB
   subgraph Channels
-    UI[Back-office Web App]
-    PORTAL[Applicant and Broker Portal]
-    API[Public/Partner API]
+    UI[Back-office Web App incl. branch capture]
+    PORTAL[Applicant Portal]
+    BPORTAL[Broker Portal]
+    API[Partner API and LIXI inbound]
   end
-  GW[API Gateway: authn, authz, rate limits, idempotency]
+  GW[API Gateways: authn, authz, rate limits, idempotency]
   subgraph Core[Core Platform - modular services]
+    INTAKE[Intake Service]
+    ACCESS[Applicant Access Service]
+    CUST[Customer Registry]
+    PROD[Product Catalogue]
     APP[Application and Case Service]
     DISC[Disclosure and Consent Service]
     DOC[Document Service]
@@ -108,10 +122,20 @@ flowchart TB
     NOTIF[Notification Providers]
     IDP[Identity Providers]
     DOWN[Customer Downstream Systems]
+    MASTER[Customer Master: core banking or CRM]
   end
   UI --> GW
   PORTAL --> GW
+  BPORTAL --> GW
   API --> GW
+  GW --> INTAKE
+  GW --> ACCESS
+  INTAKE --> APP
+  INTAKE --> PROD
+  INTAKE --> CUST
+  CUST --> MASTER
+  ACCESS --> DISC
+  ACCESS --> NOTIF
   GW --> APP
   GW --> DOC
   APP --> DISC
@@ -148,7 +172,9 @@ flowchart TB
 
 Deployment view: one installation per customer (D-12). Core services may initially ship as a modular set of a few deployables (A-16) rather than many fine-grained microservices; module boundaries and contracts are still enforced so they can be split later.
 
-The portal is an untrusted, internet-facing channel (D-22), kept separate from the back-office app. It shows application status and human-approved communications only, never agent findings, fraud signals or internal recommendations. External identities follow A-24 and consent follows A-29.
+Section 27 describes the channels, intake, applicant access, Customer Registry and internet trust zones in detail.
+
+The portals are untrusted, internet-facing channels (D-22), kept separate from the back-office app. It shows application status and human-approved communications only, never agent findings, fraud signals or internal recommendations. External identities follow A-24 and consent follows A-29.
 
 ---
 
@@ -438,6 +464,9 @@ All calls are authorised for a dedicated machine role, idempotent and audited. B
 - **Asynchronous** (events/workflows): document processing, OCR, agent execution, bureau/KYC calls, report generation, notifications, webhooks to external systems. Clients receive `202 Accepted` and status resources or webhooks.
 - **Eventing**: domain events (`ApplicationSubmitted`, `DocumentReceived`, `AgentCompleted`, `ReviewRequired`, `DecisionRecorded`) via the workflow engine plus a transactional outbox (ADR-006). An internal broker is optional at the stated scale and is independent of any customer broker used for handoff.
 - **Webhooks**: signed (HMAC), retried with backoff, dead-lettered, with delivery logs.
+- **Intake API** (section 27.3): one canonical `IntakeSubmission` contract behind every channel. The partner API accepts it directly; the LIXI2 adapter maps to it. Partner clients receive status by signed webhook or polling, limited to status values (INV-33).
+- **Applicant access API**: link exchange, one-time code, consent, document upload and outstanding requests. It is served only by the public gateway and is scoped to the link's application and party.
+- **Customer Registry SPI**: `search`, `get`, `propose`, `confirm` and `create-at-handoff`, implemented by the built-in registry or by a core banking or CRM adapter (section 27.11).
 - **Integration adapters** (anti-corruption layer) per external provider: credit bureau (bureau-neutral contract, D-28; AU candidates include Equifax and Experian, which acquired illion in 2024), KYC/DVS or manual review by policy (D-26), banking data (PDF now, CDR later, D-27), notification providers. Funding and servicing functions are out of scope (D-34); handoff to the systems that perform them is in scope (D-37).
 
 ### 12.1 Downstream handoff (D-37)
@@ -473,6 +502,9 @@ Flow: `Recorded human decision -> transactional outbox -> Handoff Service -> cha
 - **Machine identities**: workload identity (Kubernetes service accounts, cloud workload identity federation), mutual TLS or short-lived tokens between services; no shared static secrets.
 - Technical Support: no standing access to application data; break-glass (A-08).
 - **Applicants and brokers** are external identities and are not assumed to exist in the staff IdP. A-24 gives them a separate realm, with brokers limited to their own submissions.
+- **Originator roles** (D-45, D-50): Broker (external realm, scoped to their originator organisation), Broker Admin (manages the firm's broker users, if the lender allows it), and Relationship Manager (staff realm, A-41). An originator can capture and submit applications, upload documents and reissue links, but holds no maker or checker permission on applications they originated (INV-27).
+- **Applicant assurance levels**: a link session (token plus one-time code, short-lived, one application), an applicant account (verified email or mobile plus password or passkey, MFA for sensitive actions), and a lender customer session federated from the lender's customer identity provider over OIDC (OQ-17). Pre-fill from the lender needs the customer session.
+- **Partner principals** (A-37): OAuth 2.0 client credentials bound to an mTLS client certificate, registered per partner and per originator. The partner gateway checks that the `originatorUserId` in a submission belongs to an organisation the client is registered for.
 
 ---
 
@@ -511,6 +543,18 @@ Flow: `Recorded human decision -> transactional outbox -> Handoff Service -> cha
 | T18 | Forged SAML assertion | Signature wrapping, replay, wrong audience | Maintained SAML library or broker, signed assertions, audience, time and replay checks, certificate rotation |
 | T19 | Maker-checker bypass | Dual roles, edits after approval, threshold changes | Identity-based enforcement, approval invalidation on change, maker-checker on trigger rules |
 | T20 | Abusive purge | Destroying evidence through hooks | Dedicated role, holds, audited PURGE ledger entry |
+| T21 | Forwarded or phished applicant link | Email forwarded, look-alike email | One-time code to the applicant's mobile, short session, single application scope, no data in the message, lender sender domain with SPF, DKIM and DMARC (A-38) |
+| T22 | One-time code interception | SIM swap, number change by a broker | Mobile changes need re-verification and are ledgered; a broker-entered mobile is flagged; attempt limits; email fallback by policy |
+| T23 | Broker or RM consents for the applicant | Originator clicks through consent | Consent only in the applicant's session (INV-23); originator principals cannot call consent endpoints |
+| T24 | Application number enumeration | Guessing references | Random references with a check digit; the reference grants no access (A-38); rate limits and uniform errors |
+| T25 | Malicious LIXI or partner payload | XML external entities, oversized or deeply nested XML, injection | Hardened parser with DTDs and external entities off, size and depth limits, schema validation, mapping in an isolated adapter |
+| T26 | Pre-fill data leakage | Session confusion or over-broad claims | Pre-fill only in a customer session, minimal claims, shown only to that customer, never copied to a broker view |
+| T27 | Wrong customer merge | Weak match, common names | Deterministic rules first, staff confirmation for probable matches, reversible link with history (INV-29) |
+| T28 | Originator self-approval or collusion | RM or broker acts on own application | Originator excluded from maker and checker (INV-27); originator mix shown in oversight metrics |
+| T29 | Evading duplicate detection | Small changes across channels | Matching on verified attributes, document hashes and devices; human review (D-52) |
+| T30 | Partner impersonating another broker | Stolen or shared client credentials | mTLS-bound tokens, per-originator registration, broker-to-partner binding check, rotation and revocation (A-37) |
+| T31 | Upload abuse | Large files, malware, storage filling | Upload quotas per link and application, size and type limits, quarantine, malware scan (A-40) |
+| T32 | Status leakage to brokers | Findings or fraud reasons in status | Status-only schema for broker and partner responses (INV-33, T16) |
 
 ---
 
@@ -661,7 +705,8 @@ Plugin/provider frameworks share one model:
 - **Packaging**: adapters shipped as separate container images or sidecars communicating via gRPC/HTTP with a defined contract; or as signed packages loaded by an adapter host. Core never imports adapter code.
 - **Registration**: adapter manifest (id, version, capabilities, config JSON schema, required secrets, certified compatibility) registered in the Registry; tenant admins instantiate it with configuration.
 - **Customer-specific integration without core changes**: implement the SPI contract (SDK + conformance test kit), publish the adapter, register and configure it for the tenant, pass certification tests (A-07 tier 3). Mapping layers translate external data to canonical domain models (anti-corruption layer).
-- Canonical models (e.g. `CreditReport`, `IdentityVerificationResult`, `Document`, `Finding`) isolate the core from vendor formats.
+- Canonical models (e.g. `CreditReport`, `IdentityVerificationResult`, `Document`, `Finding`, `IntakeSubmission`, `CreditRequest`) isolate the core from vendor formats.
+- **Credit products** are configuration, not code (D-54, section 27.14). Further SPI categories: Customer Registry, Channel (LIXI2 and partner formats) and Collateral services (PPSR, valuation) for later products.
 
 ---
 
@@ -680,6 +725,11 @@ Plugin/provider frameworks share one model:
 | Model risk management | Model/prompt registry, evaluation gates, drift monitoring, change approval |
 | Small/medium-amount credit contracts | Explicit configured rule sets, no silent defaults (D-33) |
 | AML/CTF identification | Method, result and evidence recorded for DVS/KYC or manual review (D-26) |
+| Consent by the applicant | Applicant-only consent with session, wording version and channel recorded (D-46, INV-23) |
+| Third-party originators | Originator recorded on every application; broker licence and accreditation held; outcomes monitored per originator (RL-13) |
+| Identity by channel | Method per channel set by the lender's AML/CTF program; branch sighting recorded as supporting evidence only (D-49, OQ-19) |
+| Access and correction (APPs 12, 13) | Supported for the built-in Customer Registry (A-42) |
+| Credit cards | Limit-based affordability and no unsolicited limit increases, as card rule sets (D-56) |
 | Regulatory ownership | Customer/counsel-led until a RACI is approved (A-23) |
 
 ### 21.1 Not blocking banks later (D-43; confirm with counsel)
@@ -726,6 +776,14 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 | ADR-022 | Fraud screening: forensic tools plus agent that cannot lower tool signals | Accepted | D-40, A-03 |
 | ADR-023 | Configurable verdict maker-checker | Accepted | D-42 |
 | ADR-024 | Retention hooks only, no policy engine | Accepted | D-39 |
+| ADR-025 | Canonical intake behind all channels | Accepted | D-45 |
+| ADR-026 | Consent gate before bureau, identity and AI processing | Accepted | D-46 |
+| ADR-027 | Secure applicant link with one-time code | Accepted | D-47, A-38, A-39 |
+| ADR-028 | Pluggable Customer Registry (external, built-in, hybrid) | Accepted | D-53 |
+| ADR-029 | Products as versioned configuration | Accepted | D-54, A-44 |
+| ADR-030 | Internet trust zones and separate partner gateway | Proposed | A-36, A-37, A-40 |
+| ADR-031 | LIXI2 mapped at the edge, never the internal model | Accepted | D-55; OQ-15 |
+| ADR-032 | Partner authentication with mTLS-bound OAuth client credentials | Proposed | A-37 |
 
 ---
 
@@ -745,6 +803,10 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 12. SaaS readiness could turn into building SaaS early; build only the seams in section 17.1.
 13. Fraud screening could wrongly flag genuine applicants; track false positives per check.
 14. If a customer never operates the retention hooks, personal data accumulates indefinitely. State this responsibility in the contract.
+15. Applicants may not complete consent and uploads after a broker submits, so lapses rise and brokers blame the lender. Track completion per channel.
+16. Broker platforms may not send documents through LIXI2, which could leave brokers using the portal for longer (OQ-15).
+17. Every lender's core banking or CRM differs, so customer-master adapters could become custom work for each installation.
+18. More internet-facing entry points increase the attack surface; the trust zones in section 27.15 must be tested by an independent penetration test before go-live.
 
 ---
 
@@ -754,7 +816,9 @@ The 8-hour RTO (D-11) may be too long for a bank, so it must not be built in as 
 2. Produce the specifications in `PROJECT_BRIEF.md` section 12 step 3, continuing from the drafted `DOMAIN_MODEL.md` with agent contract, Model Gateway/Harness and Evidence Ledger.
 3. Have the drafted `REFERENCE_POLICY.md` (D-38) reviewed and resolve its PQ questions, then define a synthetic test dataset, including tampered documents, and an evaluation plan.
 4. Close the open items in `PROJECT_BRIEF.md` section 8.5 (OP-01..OP-04).
-5. Resolve the gaps DG-01..DG-11 in `ARCHITECTURE_DIAGRAMS.md` section 4.
+5. Resolve the gaps DG-01..DG-17 in `ARCHITECTURE_DIAGRAMS.md` section 4.
+6. Confirm or amend the proposed assumptions A-36..A-44, and close OQ-15..OQ-19.
+7. Specify the intake contract, the applicant access API and the Customer Registry SPI (section 27).
 
 ---
 
@@ -769,6 +833,7 @@ Accepted on 2026-11-22 (D-44). `PROJECT_BRIEF.md` section 6 holds the authoritat
 | Amended by the user | A-01 and A-03 (fraud screening), A-13 (retention hooks), A-19 (SAML) |
 | Amended as recommended | A-05, A-07, A-08, A-10, A-11, A-17, A-20, A-21 |
 | Superseded | A-14 (customer owns retention, D-39) |
+| Proposed on 2026-11-27 | A-36..A-44 (channels and intake) |
 
 ---
 
@@ -785,6 +850,7 @@ Accepted on 2026-11-22 (D-44). `PROJECT_BRIEF.md` section 6 holds the authoritat
 | RF-05 | A-05 cited MinIO, whose community edition is archived | Resolved: A-05 amended |
 | RF-06 | Five assumptions were marked Proposed although already decided | Resolved by D-44 |
 | RF-07 | The brief points to `docs/`, but both files are in the project root, and its work plan cites outdated ID ranges | Corrected on 2026-11-22 |
+| RF-08 | The documents had no step-by-step intake per channel, no applicant link, no customer resolution, no branch role and no product abstraction | Resolved by D-45..D-56 and section 27 |
 
 ### Questions
 
@@ -797,3 +863,197 @@ Accepted on 2026-11-22 (D-44). `PROJECT_BRIEF.md` section 6 holds the authoritat
 | Q-05 | What does the product provide for retention? | Hooks only (D-39) |
 | Q-06 | How many people act on a verdict? | Configurable maker-checker (D-42) |
 | Q-07 | Are banks a target market? | Later; do not block them (D-43) |
+| Q-08..Q-13 | Channels, consent, identity, customer master, broker documents, credit cards | Answered 2026-11-27; see `PROJECT_BRIEF.md` section 8.6 |
+
+---
+
+## 27. Channels and intake
+
+This section covers how applications enter CreditMate on every route, how the applicant is reached securely, how applicants are matched to customers, how products are defined, and where the internet boundaries are. The diagrams are in `ARCHITECTURE_DIAGRAMS.md` sections 2E–2J and 3D. The entities are in `DOMAIN_MODEL.md` sections 4.13–4.15.
+
+### 27.1 Principles
+
+1. **One intake, many channels** (D-45). Every route produces the same canonical `IntakeSubmission`. Channel differences end at the edge.
+2. **Only the applicant consents** (D-46). Nothing that uses bureau, identity provider or AI processing runs before each party's own consent.
+3. **The link is not the credential** (D-47). A link only identifies an invitation; access needs a one-time code, and the session is scoped to one application and party.
+4. **The application number is a reference, never a key** (A-38).
+5. **CreditMate does not assume it is the customer master** (D-53).
+6. **Products are data** (D-54). A new product is a new configuration version, not a code branch.
+7. **Each audience has its own entry point** (A-36). Applicants, brokers, partner systems and staff never share a gateway or identity realm.
+
+### 27.2 Channels and intake sources
+
+| Channel | Intake source | Who submits | Identity realm | Gateway | Phase |
+|---|---|---|---|---|---|
+| BROKER | BROKER_PORTAL | Accredited broker user | External (broker) | public-gateway | 1 |
+| BROKER | PARTNER_API | Broker CRM or aggregator system for a broker | Partner client (A-37) | partner-gateway | 1 |
+| BROKER | LIXI | Broker platform sending LIXI2 | Partner client | partner-gateway, lixi-adapter | Later (OQ-15) |
+| BRANCH | BACK_OFFICE | Relationship manager | Staff (A-41) | staff-gateway | 1 |
+| DIRECT | WEB | Applicant, with or without an account | External (applicant) | public-gateway | 1 |
+| DIRECT | MOBILE | Applicant using the lender's app | External (applicant) | public-gateway | Later (responsive web in 1) |
+| PARTNER, DEALER | PARTNER_API | Dealer or introducer system | Partner client | partner-gateway | Later |
+
+Every application records `channel`, `intakeSource`, `originatorId` and `originatorUserId` (DOMAIN_MODEL 4.1). Direct applications use the tenant's DIRECT originator.
+
+### 27.3 Canonical intake pipeline
+
+All channels pass through the same steps in the Intake Service:
+
+1. **Authenticate and authorise** the principal at its gateway, and check it may act for the stated originator.
+2. **Receive and store the raw payload** by reference as an `IntakeSubmission`, with its idempotency key. Same key with a different payload is rejected (T11).
+3. **Translate** the channel format (portal form, partner JSON or LIXI2) into the canonical model with a versioned mapping. The raw payload stays for traceability.
+4. **Validate** against the pinned product version (INV-32): required fields, credit form, allowed channel, collateral schema.
+5. **Create or update** the Application, Parties as prospects, CreditRequest and any Collateral, and issue a random `applicationNumber`.
+6. **Generate the document checklist** from the product's checklist configuration and the applicant's declared situation (D-48), creating DocumentRequests.
+7. **Check consent.** If any party lacks current consent, set `AwaitingApplicantConsent` and issue each such party a secure link (section 27.8).
+8. **Run customer resolution** in the background (section 27.11) and **duplicate detection** (section 27.12). Both only propose.
+9. **Return** the application number and status to the submitter, and send the broker or RM an acknowledgement. The response never includes internal findings.
+
+Steps 1–7 complete before the request is acknowledged, and the submission is durable from step 2 (A-28). Processing (OCR, bureau, identity, agents) starts only when the application enters `Processing`.
+
+### 27.4 Broker route
+
+1. The broker enters the application in the broker portal, or the broker's CRM sends it through the partner API (later LIXI2).
+2. The broker attests that they gave the applicant the lender's privacy notice and obtained authority to submit. This is recorded, but it is **not** applicant consent (D-46).
+3. Intake runs (section 27.3). The broker sees the application number on screen; the system emails the broker an acknowledgement, without personal data beyond the applicant's name.
+4. Each applicant receives a secure link by email or SMS. They enter the one-time code, read the disclosures, consent, and upload outstanding documents.
+5. The broker may upload documents they hold through the portal (D-55), and can see which requests are outstanding, but not the documents' review results.
+6. The broker can reissue an expired link, change a contact detail (which is flagged, T22), withdraw the application, and see status. They cannot see findings, fraud signals, recommendations or notes (INV-33).
+
+Broker documents: portal upload in Phase 1, a partner API document endpoint next, then LIXI2 if the platforms support attachments (OQ-15). All three land in quarantine (A-40) and record `uploadedByType = BROKER` (INV-31).
+
+### 27.5 Branch and relationship manager route
+
+1. The RM signs in through the staff realm on the lender's network or zero-trust access (A-41) and opens branch capture in the back-office app.
+2. The RM searches the Customer Registry. For an existing customer they start from the customer record; otherwise the applicant is a prospect.
+3. The RM captures the application and scans or uploads the documents the customer brought. For an identity document seen in person, the RM records a `DocumentSighting` (type, number, issuer, expiry), which is supporting evidence only (D-49).
+4. Consent is given by the applicant themselves: either on a branch-assisted screen that needs the applicant's own one-time code sent to their mobile, or later through the secure link. The RM cannot tick consent (INV-23).
+5. Intake runs (section 27.3). The applicant gets the application number and, for anything outstanding, a secure link.
+6. The RM is recorded as the originator and cannot act as maker or checker on that application (INV-27).
+
+### 27.6 Direct route (web and mobile)
+
+1. The applicant selects a product on the lender's site. No account is needed to start (D-51).
+2. They verify their email or mobile with a one-time code. An `ApplicantAccount` is created when they first save or submit.
+3. Existing customers can choose "sign in with internet banking", federated from the lender's customer identity provider over OIDC (OQ-17). In that case known details are pre-filled and marked `PREFILLED`, and the applicant confirms them (T26).
+4. The applicant reads the disclosures, consents in session, completes the form, and uploads documents directly.
+5. Intake runs (section 27.3). The application number is shown and emailed. Later visits use the account, or a secure link for outstanding requests.
+
+Abandoned drafts keep lifecycle dates for the lender's retention hooks (D-39, DM-10).
+
+### 27.7 Consent gate
+
+- Consent is stored per party and purpose with the wording version, the session it was given in and the channel (`capturedVia`).
+- The Tool Broker and Model Gateway check consent before each bureau, DVS/KYC or model call that uses the party's data (INV-24, A-29). If it is missing, the call is refused and the workflow waits.
+- Intake checks that need no consent (schema validation, malware scan, storage, checklist) may run while `AwaitingApplicantConsent`.
+- Withdrawing consent stops further processing for that purpose, revokes the party's links and raises a task. Ledger entries remain.
+- An application waiting for consent is proposed for lapse after the configured period (A-39). A human confirms the lapse (A-26).
+
+### 27.8 Secure link and one-time code
+
+| Property | Design |
+|---|---|
+| Token | At least 128 bits from a secure random source, sent only in the link. Only its hash is stored (INV-25) |
+| Scope | One application and one party. One link per joint applicant (D-48) |
+| Purposes | Consent, document upload, information requests |
+| Second factor | One-time code to the applicant's verified mobile; email by policy. 10-minute validity, 5 attempts (A-39) |
+| Session | Short-lived and bound to the browser; idle timeout; no persistent login |
+| Expiry | 7 days by default; reminders on days 2, 5 and 7 (A-39) |
+| Reissue | By the broker, RM, applicant (self-service from the expired page, sent to the contact on file) or staff. Reissue supersedes the old link at once |
+| Revoke | On withdrawal, decision, lapse, consent withdrawal or a contact change |
+| Message content | First name, the link, and lender contact details only (A-38) |
+| URL handling | Token exchanged for a session on first use and removed from the address bar; `Referrer-Policy: no-referrer`; not logged by gateways |
+
+The link and code lifecycle is in `DOMAIN_MODEL.md` section 5.3 and `ARCHITECTURE_DIAGRAMS.md` section 2I.
+
+### 27.9 Document checklist and requests
+
+- The product's `DOCUMENT_CHECKLIST` configuration lists requirements by condition, for example two recent payslips for PAYG employment, 90 days of bank statements, or photo identity unless verified electronically.
+- Intake creates one `DocumentRequest` per unmet requirement and party. Requests are fulfilled by any upload of an acceptable type, from any channel.
+- Assessors and Indexers can raise further requests at any time with a reason; the applicant is notified through their link and the broker sees the request.
+- A request can be waived only by staff with a reason. Waivers are ledgered.
+- Reminders and lapse follow A-39.
+
+### 27.10 Identity verification by channel
+
+Verification is document-based on every route (D-49). The lender's AML/CTF program decides the acceptable methods per channel (OQ-19).
+
+| Channel | Evidence | How a VERIFIED outcome is reached |
+|---|---|---|
+| Direct | Uploaded identity document, details entered by applicant | Electronic DVS/KYC check of the document details, or manual document review by policy |
+| Broker | Uploaded by broker or applicant | Same as direct |
+| Branch | Original sighted by the RM, plus a copy | Electronic check of the sighted details. The sighting is recorded but cannot produce VERIFIED by itself (INV-28) |
+
+### 27.11 Customer Registry
+
+| Mode | For | Customer ID | Behaviour |
+|---|---|---|---|
+| EXTERNAL | Lenders with core banking or a CRM as customer master | Created by the master, normally at handoff | Search and match through the adapter. New customers are returned in the handoff acknowledgement and stored as `CustomerIdentifier` |
+| BUILT_IN | Small lenders without a customer master | CreditMate `customerId` | CreditMate holds customers and supports access and correction (A-42). It is not a CRM |
+| HYBRID | Lenders migrating or with a partial master | Both, mapped | CreditMate holds the mapping table and syncs with the master |
+
+- At intake every party is an application-scoped prospect. Resolution creates a `CustomerLink`.
+- Deterministic rules confirm a link automatically: lender customer number from a customer session, verified identity document number, or verified contact plus date of birth (A-43). Anything weaker only proposes a match for staff (INV-29).
+- Match candidates show which fields matched, not another person's data, until an authorised user opens them.
+- The adapter contract is in section 12.
+
+### 27.12 Duplicate detection
+
+- Runs at intake across open and recent applications within the lender, on verified attributes, document hashes and declared details.
+- Raises a `DuplicateCandidate` for human review. It never merges, withdraws or declines anything (INV-30).
+- Possible outcomes: not a duplicate; duplicate confirmed, with a human choosing which application continues; or a referral to fraud review.
+
+### 27.13 Notifications and broker status
+
+- All messages go through the Notification Service and the notification adapter, then the egress proxy, to the lender's email and SMS providers (OQ-16).
+- Templates are versioned configuration. Content follows A-38; decision communications need human approval.
+- Brokers see status in the portal, and partner systems receive signed webhooks (section 12) with status codes only (INV-33).
+- Bounces and failed SMS raise a task so the broker or RM can correct the contact.
+
+### 27.14 Product definition and credit card readiness
+
+A `ProductVersion` (DOMAIN_MODEL 4.15) pins: type, secured or unsecured, credit form (term or revolving), collateral schema, checklist, rule set, workflow, agent profile, affordability method, disclosure set, handoff mapping and enabled channels. It is approved by maker-checker and recorded in the run snapshot (A-07).
+
+| Product | New configuration | New code |
+|---|---|---|
+| Personal loan (Phase 1) | Reference configuration | None |
+| Credit card (next) | Revolving credit form, limit-based affordability rules, card disclosures, checklist, card-platform handoff mapping | Card-platform handoff adapter if not covered by existing channels |
+| Vehicle loan | Secured, vehicle collateral schema, balloon option | PPSR and valuation adapters |
+| Home loan | Secured, property collateral schema | Valuation, mortgage registration and settlement integrations; possibly LIXI2 first |
+
+### 27.15 Trust zones and internet boundaries
+
+| Zone | Who or what | Entry point | Authentication | Key controls |
+|---|---|---|---|---|
+| Z1 Internet: applicants | Applicant browsers and mobile app | CDN or WAF, public load balancer, public-gateway | Link plus one-time code, applicant account, or customer IdP | Bot protection, rate limits per IP, link and account, upload quotas, strict security headers and content security policy |
+| Z2 Internet: brokers | Broker browsers | Same edge, broker host name, public-gateway | External realm, broker MFA required | Per-organisation authorization, status-only responses |
+| Z3 Partner B2B | Broker CRMs, aggregators, LIXI platforms, dealers | Partner load balancer, partner-gateway | mTLS plus OAuth client credentials (A-37) | IP allow-list where possible, per-client quotas, schema and XML hardening (T25), separate from Z1 and Z2 |
+| Z4 Staff and branch | Back-office users, RMs | Private load balancer, staff-gateway | Staff realm via the lender's IdP, MFA | Lender network or zero-trust access only (A-41), device policy by lender |
+| Z5 Application core | Services, workflows, agents | No inbound from the internet | Workload identity, mTLS | Default-deny network policies |
+| Z6 Data | Database, ledger, repository, staging | From Z5 only | Workload identity | Encryption with lender keys; repository never internet-reachable (A-40) |
+| Z7 Outbound | Email and SMS, bureau, DVS/KYC, model providers, customer master, downstream | egress-proxy only | Per-provider credentials held by adapters | Destination allow-list, AU processing (D-31), minimum data |
+| Z8 Federation | Lender staff IdP and customer IdP | Browser redirects and back-channel from identity-broker | SAML or OIDC | Signed assertions, audience and replay checks (T18), separate realms |
+
+Boundary rules:
+
+1. Internet-facing components (gateways, identity-broker front end, portals) hold no database, repository or provider credentials (A-36).
+2. Uploads stream through the public or partner gateway into quarantine. No pre-signed repository URL is ever issued externally (A-40).
+3. Z1, Z2 and Z3 use separate host names, gateway policies and rate limits, so abuse of one does not exhaust another.
+4. Partner traffic never reaches the applicant or broker web routes, and the reverse.
+5. All outbound traffic leaves through the egress proxy to allow-listed destinations.
+6. Webhooks to partners are signed and sent through the egress proxy.
+7. The edge records request metadata, never link tokens, one-time codes or document content (section 7).
+
+### 27.16 Components added or changed
+
+| Component | Change |
+|---|---|
+| Intake Service | New module in core-api: canonical submission, mapping, checklist, duplicate detection |
+| Applicant Access Service | New module in core-api: links, one-time codes, sessions |
+| Customer Registry | New module in core-api with a built-in store; adapters for core banking or CRM |
+| Product Catalogue | Part of the Configuration and Governance Service |
+| partner-gateway | New deployable for Z3, separate from public-gateway |
+| lixi-adapter | New adapter, later phase, isolated XML parsing and mapping |
+| customer-master-adapter | New adapter per core banking or CRM, through the egress proxy |
+| Notification adapter | Adds SMS and one-time code delivery |
+| identity-broker | Adds customer IdP federation into the external realm (OQ-17) |

@@ -1,15 +1,16 @@
-# CreditMate - Architecture Diagrams v0.2
+# CreditMate - Architecture Diagrams v0.3
 
-> Status: DRAFT, 2026-11-22. For architects, engineers, and lender infrastructure and security teams.
-> Based on `ARCHITECTURE_DRAFT.md` v0.4, `DOMAIN_MODEL.md` v0.2 and the decisions (D-xx) and assumptions (A-xx) in `PROJECT_BRIEF.md`.
+> Status: DRAFT, 2026-11-27. For architects, engineers, and lender infrastructure and security teams.
+> Based on `ARCHITECTURE_DRAFT.md` v0.5, `DOMAIN_MODEL.md` v0.3 and the decisions (D-xx) and assumptions (A-xx) in `PROJECT_BRIEF.md`.
 > v0.2 corrects the external integration route: Tool Broker, provider adapters, callbacks and lender gateways (DG-09..DG-11).
+> v0.3 adds origination channels, applicant links, customer resolution and internet trust zones (2E–2J, 3D; D-45..D-56).
 > The Mermaid source in this file is the master. The images in `diagrams/` are exports of it.
 
 | Level | Question it answers | Diagrams |
 |---|---|---|
 | 1. High-level | What is the product, who uses it and what does it connect to? | [HLD](#1-high-level-architecture) |
-| 2. Low-level | What are the components and how do they work together? | [2A components](#2a-component-map), [2B intake and processing](#2b-intake-and-processing), [2C AI call path](#2c-ai-call-path), [2D decision and handoff](#2d-decision-and-handoff) |
-| 3. Deployment | What runs where in the lender's infrastructure? | [3A topology](#3a-deployment-topology), [3B availability and recovery](#3b-availability-and-recovery), [3C release path](#3c-release-path) |
+| 2. Low-level | What are the components and how do they work together? | [2A components](#2a-component-map), [2B intake and processing](#2b-intake-and-processing), [2C AI call path](#2c-ai-call-path), [2D decision and handoff](#2d-decision-and-handoff), [2E channel intake](#2e-channel-intake-overview), [2F broker](#2f-broker-route), [2G branch](#2g-branch-and-relationship-manager-route), [2H direct](#2h-direct-route), [2I secure link](#2i-secure-link-lifecycle), [2J customer resolution](#2j-customer-resolution-by-registry-mode) |
+| 3. Deployment | What runs where in the lender's infrastructure? | [3A topology](#3a-deployment-topology), [3B availability and recovery](#3b-availability-and-recovery), [3C release path](#3c-release-path), [3D trust zones](#3d-trust-zones-and-internet-boundaries) |
 
 How to read all diagrams:
 
@@ -36,15 +37,16 @@ AI produces evidence and recommendations, rules apply lender policy, and a human
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'clusterBkg':'#f8fafc','clusterBorder':'#94a3b8','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'subGraphTitleMargin':{'top':6,'bottom':22}}}}%%
 flowchart TB
-  EXT["Applicants and brokers"]:::human
-  PART["Partner systems"]:::ext
-  STAFF["Lender staff<br/>Indexer, Assessor, Checker,<br/>BA Admin, Auditor, Support"]:::human
+  EXT["Applicants and brokers<br/>web and mobile"]:::human
+  PART["Partner systems<br/>broker CRMs, aggregators, LIXI2"]:::ext
+  STAFF["Lender staff and branch RMs<br/>Indexer, Assessor, Checker,<br/>BA Admin, Auditor, Support"]:::human
 
   subgraph LENDER["Lender infrastructure"]
     subgraph PRODUCT["CreditMate"]
-      PUB["Public channels<br/>portal, partner API"]:::core
-      INT["Back-office application<br/>SAML or OIDC sign-in"]:::core
-      ORIG["Origination<br/>application, consent, documents"]:::core
+      PUB["Public channels<br/>applicant and broker portals"]:::core
+      PARTG["Partner API<br/>mTLS, separate gateway"]:::prop
+      INT["Back-office application<br/>branch capture, SAML or OIDC"]:::core
+      ORIG["Intake and origination<br/>canonical intake, secure links,<br/>consent, documents, customers"]:::core
       STORE[("Application database and<br/>document repository")]:::data
       FLOW["Workflow orchestrator"]:::core
       AI["AI plane<br/>6 agents, harness, model gateway"]:::ai
@@ -55,16 +57,23 @@ flowchart TB
       GOV["Configuration and governance"]:::core
       LEDGER["Evidence Ledger<br/>decision trace"]:::data
     end
-    IDP["Lender identity provider"]:::ext
+    IDP["Lender identity providers<br/>staff, and customers optional"]:::ext
     DOWN["Lender downstream systems<br/>contract, funding, servicing"]:::ext
+    MASTER["Customer master<br/>core banking or CRM, optional"]:::ext
   end
+  MSGP["Email and SMS providers"]:::ext
 
   MODELS["Model providers<br/>AU processing by default"]:::ext
   PROV["OCR, credit bureau,<br/>DVS and KYC providers"]:::ext
 
   EXT --> PUB
-  PART --> PUB
+  PART --> PARTG
+  PARTG --> ORIG
   STAFF --> INT
+  INT --> ORIG
+  ORIG -.->|"customer lookup"| MASTER
+  ORIG -->|"links, reminders"| MSGP
+  MSGP -.-> EXT
   INT -.->|"federated sign-in"| IDP
   PUB --> ORIG
   INT --> HUMAN
@@ -93,7 +102,7 @@ flowchart TB
   classDef ext fill:#e5e7eb,stroke:#4b5563,color:#111827
 ```
 
-Lender infrastructure is on-premises or any cloud, with one installation per lender. Dotted arrows are sign-in, configuration and audit writes.
+Lender infrastructure is on-premises or any cloud, with one installation per lender. Dotted arrows are sign-in, configuration, lookups and audit writes. Section 2E shows the channel intake and 3D the internet trust zones.
 
 ---
 
@@ -111,9 +120,9 @@ All modules, their main parts and their stores. Arrows between layers show allow
 flowchart TB
   subgraph L1["Channels and edge"]
     direction TB
-    C1["Applicant and Broker Portal<br/>status, upload, disclosures"]:::core
-    C2["Back-office Web App<br/>queues, decision trace, admin"]:::core
-    C3["Public and Partner API<br/>versioned, idempotent"]:::core
+    C1["Applicant and Broker Portals<br/>links, consent, upload, status"]:::core
+    C2["Back-office Web App<br/>queues, decision trace,<br/>branch capture, admin"]:::core
+    C3["Partner API, LIXI2 later<br/>versioned, idempotent"]:::core
     C4["API Gateway<br/>authentication, scopes, rate limits,<br/>schema validation"]:::core
     C5["Identity broker<br/>staff SAML and OIDC,<br/>separate external realm"]:::prop
     C6["Authorization<br/>RBAC, ABAC, separation of duties"]:::prop
@@ -126,7 +135,10 @@ flowchart TB
     direction LR
     subgraph L2A["Origination"]
       direction TB
-      B1["Application and Case Service<br/>parties, revisions, state"]:::core
+      B0["Intake Service<br/>canonical submission, mapping,<br/>checklist, duplicates"]:::core
+      B0A["Applicant Access Service<br/>secure links, one-time codes"]:::core
+      B0C["Customer Registry<br/>external, built-in, hybrid"]:::core
+      B1["Application and Case Service<br/>parties, credit request,<br/>collateral, document requests"]:::core
       B2["Disclosure and Consent Service<br/>versions, consent checks, notices"]:::core
       B3["Document Service<br/>intake, short-lived access,<br/>repository adapter"]:::core
       B4["Metadata Service<br/>document IDs, regions, lineage"]:::core
@@ -140,7 +152,7 @@ flowchart TB
     end
     subgraph L2C["Control"]
       direction TB
-      B9["Configuration and Governance<br/>versions, approval, snapshots"]:::core
+      B9["Configuration and Governance<br/>versions, approval, snapshots,<br/>product catalogue"]:::core
       B10["Evidence Ledger Service<br/>append, hash chain, trace"]:::core
       B11["Metering and Cost Service<br/>usage, budgets, alerts"]:::core
       B12["Retention Hooks<br/>label, export, hold, purge"]:::core
@@ -163,7 +175,7 @@ flowchart TB
     subgraph L3C["Tools"]
       direction TB
       A6["Tool Broker<br/>allow-lists, residency, audit"]:::ai
-      A7["Provider adapters, one per provider<br/>own credentials and destinations<br/>OCR, bureau, KYC, notification"]:::ai
+      A7["Provider adapters, one per provider<br/>own credentials and destinations<br/>OCR, bureau, KYC, notification,<br/>customer master, LIXI2"]:::ai
       A8["Document sandbox<br/>malware scan, render, forensics"]:::ai
     end
   end
@@ -414,6 +426,299 @@ flowchart TB
 
 A change to data, documents or verdict after submission invalidates the checker's approval (D-42).
 
+### 2E. Channel intake overview
+
+Every route ends in the same canonical intake (D-45). Draft section 27.3 lists the steps.
+
+[Open as image](diagrams/2e-channel-intake.png)
+
+<!-- diagram: 2e-channel-intake -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'clusterBkg':'#f8fafc','clusterBorder':'#94a3b8','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'subGraphTitleMargin':{'top':6,'bottom':22}}}}%%
+flowchart LR
+  subgraph ROUTES["Origination routes"]
+    direction TB
+    BR["Broker portal"]:::human
+    BCRM["Broker CRM or aggregator<br/>partner API"]:::ext
+    LIXI["Broker platform<br/>LIXI2, later"]:::open
+    RM["Branch RM<br/>back-office capture"]:::human
+    WEB["Applicant web<br/>and mobile"]:::human
+  end
+
+  subgraph EDGE["Gateways"]
+    direction TB
+    PUBG["public-gateway"]:::prop
+    PARG["partner-gateway"]:::prop
+    STG["staff-gateway"]:::prop
+  end
+
+  subgraph INTAKE["Intake Service"]
+    direction TB
+    MAP["Translate to canonical<br/>IntakeSubmission"]:::core
+    VAL["Validate against pinned<br/>product version"]:::core
+    CRE["Create application, parties,<br/>credit request, number"]:::core
+    CHK["Document checklist<br/>DocumentRequests"]:::core
+    CON{"Every party<br/>consented?"}:::core
+  end
+
+  WAITC["AwaitingApplicantConsent<br/>secure link per party"]:::core
+  PROC["Processing<br/>section 2B"]:::core
+  CUST["Customer Registry<br/>resolve, propose"]:::core
+  DUP["Duplicate detection<br/>human review"]:::core
+
+  BR --> PUBG
+  WEB --> PUBG
+  BCRM --> PARG
+  LIXI -.-> PARG
+  RM --> STG
+  PUBG --> MAP
+  PARG --> MAP
+  STG --> MAP
+  MAP --> VAL --> CRE --> CHK --> CON
+  CON -->|"no"| WAITC
+  WAITC -->|"consent given"| PROC
+  CON -->|"yes"| PROC
+  CRE -.-> CUST
+  CRE -.-> DUP
+
+  classDef core fill:#dbeafe,stroke:#1d4ed8,color:#111827
+  classDef human fill:#dcfce7,stroke:#15803d,color:#111827
+  classDef ext fill:#e5e7eb,stroke:#4b5563,color:#111827
+  classDef prop fill:#fff7ed,stroke:#c2410c,color:#111827,stroke-dasharray:6 4
+  classDef open fill:#fef2f2,stroke:#b91c1c,color:#111827,stroke-dasharray:2 3
+```
+
+Dotted arrows run in the background and only propose. No bureau, identity or AI processing starts before `Processing` (D-46).
+
+### 2F. Broker route
+
+[Open as image](diagrams/2f-broker-route.png)
+
+<!-- diagram: 2f-broker-route -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#dcfce7','actorBorder':'#15803d','noteBkgColor':'#fff7ed','noteBorderColor':'#c2410c','lineColor':'#475569'}}}%%
+sequenceDiagram
+  autonumber
+  actor B as Broker
+  participant BP as Broker portal or partner system
+  participant G as public or partner gateway
+  participant I as Intake Service
+  participant A as Applicant Access Service
+  participant N as Notification Service
+  actor P as Applicant
+  B->>BP: Enter application, attest privacy notice given
+  BP->>G: Submit with idempotency key
+  G->>G: Authenticate broker or partner, check originator
+  G->>I: IntakeSubmission
+  I->>I: Map, validate, create application, checklist
+  I-->>BP: Application number, status AwaitingApplicantConsent
+  I->>N: Broker acknowledgement
+  I->>A: Issue secure link per party
+  A->>N: Link message, no personal data
+  N-->>P: Email or SMS with link
+  P->>A: Open link
+  A->>N: One-time code to verified mobile
+  P->>A: Enter code
+  A-->>P: Session for this application only
+  P->>A: Read disclosures, give consent
+  P->>A: Upload outstanding documents
+  A->>I: Consent recorded, requests fulfilled
+  I->>I: Start processing (2B)
+  opt Broker holds documents
+    B->>BP: Upload documents
+    BP->>G: Stream to quarantine, uploader BROKER
+  end
+  opt Link expired
+    B->>BP: Reissue link
+    BP->>A: Supersede old link, issue new
+  end
+  BP->>G: Poll or receive webhook
+  G-->>BP: Status only, no findings
+```
+
+The broker's attestation is recorded but is not consent (D-46). Partner systems use the same flow through the partner-gateway (A-37).
+
+### 2G. Branch and relationship manager route
+
+[Open as image](diagrams/2g-branch-route.png)
+
+<!-- diagram: 2g-branch-route -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#dcfce7','actorBorder':'#15803d','noteBkgColor':'#fff7ed','noteBorderColor':'#c2410c','lineColor':'#475569'}}}%%
+sequenceDiagram
+  autonumber
+  actor P as Applicant at branch
+  actor R as Relationship manager
+  participant BO as Back-office app
+  participant SG as staff-gateway
+  participant CR as Customer Registry
+  participant I as Intake Service
+  participant A as Applicant Access Service
+  R->>BO: Sign in through staff realm, lender network
+  R->>BO: Search customer
+  BO->>SG: Search
+  SG->>CR: Search by name, DOB, customer number
+  CR-->>BO: Existing customer or none, prospect
+  R->>BO: Capture application, scan documents
+  R->>BO: Record identity document sighted
+  BO->>SG: Submit, uploader RM
+  SG->>I: IntakeSubmission, channel BRANCH
+  I->>I: Map, validate, create, checklist
+  alt Applicant consents in branch
+    BO->>A: Request branch-assisted consent
+    A-->>P: One-time code to applicant's mobile
+    P->>BO: Applicant enters own code, reads, consents
+    A->>I: Consent, capturedVia BRANCH_ASSISTED
+  else Applicant consents later
+    I->>A: Issue secure link
+    A-->>P: Link by email or SMS
+  end
+  I-->>BO: Application number
+  Note over R,I: The RM is the originator and can never be maker or checker (INV-27)
+```
+
+The sighting is supporting evidence. A verified identity still needs the electronic check or a document review (D-49).
+
+### 2H. Direct route
+
+[Open as image](diagrams/2h-direct-route.png)
+
+<!-- diagram: 2h-direct-route -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#dcfce7','actorBorder':'#15803d','noteBkgColor':'#fff7ed','noteBorderColor':'#c2410c','lineColor':'#475569'}}}%%
+sequenceDiagram
+  autonumber
+  actor P as Applicant
+  participant W as Applicant portal
+  participant G as public-gateway
+  participant ID as identity-broker, external realm
+  participant CIDP as Lender customer IdP
+  participant A as Applicant Access Service
+  participant I as Intake Service
+  P->>W: Choose product, start
+  alt New applicant
+    W->>A: Verify email or mobile
+    A-->>P: One-time code
+    P->>W: Enter code
+  else Existing customer
+    W->>ID: Sign in with internet banking
+    ID->>CIDP: OIDC federation
+    CIDP-->>ID: Customer claims
+    ID-->>W: Customer session
+    W->>G: Request pre-fill
+    G-->>W: Known details, marked PREFILLED
+  end
+  P->>W: Confirm details, complete form
+  P->>W: Read disclosures, consent
+  P->>W: Upload documents
+  W->>G: Save draft, account created at first save
+  W->>G: Submit with idempotency key
+  G->>I: IntakeSubmission, channel DIRECT
+  I-->>W: Application number
+  I->>I: Consent present, start processing (2B)
+  opt Later requests
+    I->>A: Issue secure link for new request
+  end
+```
+
+Customer sign-in needs OIDC support at the lender (OQ-17). Without it, existing customers follow the new-applicant path and are matched later (2J).
+
+### 2I. Secure link lifecycle
+
+[Open as image](diagrams/2i-secure-link.png)
+
+<!-- diagram: 2i-secure-link -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#dcfce7','actorBorder':'#15803d','noteBkgColor':'#fff7ed','noteBorderColor':'#c2410c','lineColor':'#475569'}}}%%
+sequenceDiagram
+  autonumber
+  participant S as Issuer: intake, broker, RM or staff
+  participant A as Applicant Access Service
+  participant DB as Link store, token hash only
+  participant N as Notification Service
+  actor P as Applicant
+  participant G as public-gateway
+  S->>A: Issue link for application and party
+  A->>A: Random token, at least 128 bits
+  A->>DB: Save hash, scope, expiry, purposes
+  A->>N: Send link, first name only
+  N-->>P: Email or SMS
+  P->>G: GET link
+  G->>A: Exchange token, not logged
+  A->>DB: Check hash, expiry, revoked
+  A-->>P: Token removed from URL, ask for code
+  A->>N: One-time code to verified mobile
+  P->>G: Enter code
+  G->>A: Verify, count attempts
+  alt Code correct
+    A-->>P: Short session, one application and party
+  else Attempts exhausted
+    A->>DB: Lock link
+    A-->>P: Ask issuer or self-service reissue
+  end
+  Note over A,N: Reminders on days 2, 5 and 7. Expiry after 7 days (A-39)
+  opt Reissue or revoke
+    S->>A: Reissue, withdraw, decide, contact change
+    A->>DB: Supersede or revoke at once
+  end
+```
+
+States are in `DOMAIN_MODEL.md` section 5.3. The application number never opens a session (A-38).
+
+### 2J. Customer resolution by registry mode
+
+[Open as image](diagrams/2j-customer-resolution.png)
+
+<!-- diagram: 2j-customer-resolution -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'clusterBkg':'#f8fafc','clusterBorder':'#94a3b8','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'subGraphTitleMargin':{'top':6,'bottom':22}}}}%%
+flowchart TB
+  P["Party created as prospect<br/>at intake"]:::core
+  MODE{"Registry mode"}:::core
+  P --> MODE
+
+  subgraph EXTM["EXTERNAL: core banking or CRM is master"]
+    E1["Search through<br/>customer-master-adapter"]:::core
+    E2["Store external customer ref<br/>on CustomerLink"]:::core
+    E3["New customer created by master<br/>at handoff, ID returned"]:::ext
+  end
+
+  subgraph BLT["BUILT_IN: CreditMate is master"]
+    B1["Search built-in registry"]:::core
+    B2["Create Customer and<br/>CustomerIdentifier"]:::core
+  end
+
+  subgraph HYB["HYBRID"]
+    H1["Search both"]:::core
+    H2["Mapping table and sync"]:::core
+  end
+
+  MODE -->|"external"| E1
+  MODE -->|"built-in"| B1
+  MODE -->|"hybrid"| H1
+
+  RULE{"Deterministic rule match?<br/>customer number, verified ID,<br/>verified contact and DOB"}:::core
+  E1 --> RULE
+  B1 --> RULE
+  H1 --> RULE
+  RULE -->|"yes"| CONF["Link CONFIRMED<br/>ledgered"]:::core
+  RULE -->|"probable"| PROP["Link PROPOSED"]:::core
+  RULE -->|"none"| NEW["No match: new customer<br/>at decision or handoff"]:::core
+  PROP --> STAFF["Staff confirm or reject<br/>matched fields shown"]:::human
+  STAFF -->|"confirm"| CONF
+  STAFF -->|"reject"| NEW
+  CONF --> E2
+  NEW --> E3
+  NEW --> B2
+  CONF --> H2
+
+  classDef core fill:#dbeafe,stroke:#1d4ed8,color:#111827
+  classDef human fill:#dcfce7,stroke:#15803d,color:#111827
+  classDef ext fill:#e5e7eb,stroke:#4b5563,color:#111827
+```
+
+Weak matches are never merged automatically (INV-29). Which branch applies is set once per installation (D-53).
+
 ---
 
 ## 3. Deployment architecture
@@ -428,18 +733,23 @@ The target is generic Kubernetes or OpenShift with S3-compatible storage (D-30, 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'clusterBkg':'#f8fafc','clusterBorder':'#94a3b8','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'subGraphTitleMargin':{'top':6,'bottom':22}}}}%%
 flowchart TB
-  NET["Internet<br/>applicants, brokers, partners"]:::ext
+  NET["Internet<br/>applicants, brokers"]:::ext
+  PNET["Partner systems<br/>mTLS"]:::ext
   CBK["Provider callbacks<br/>only where required"]:::ext
   CORP["Lender private network<br/>staff and administrators"]:::ext
 
   subgraph INFRA["Lender environment"]
     WAF["Public load balancer<br/>and WAF"]:::ext
     PLB["Private load balancer"]:::ext
+    PTLB["Partner load balancer"]:::prop
 
     subgraph K8S["Kubernetes cluster"]
       subgraph NSP["cm-public"]
-        PW["portal-web"]:::prop
+        PW["portal-web<br/>applicant and broker"]:::prop
         PGW["public-gateway"]:::prop
+      end
+      subgraph NSB["cm-partner"]
+        PTG["partner-gateway"]:::prop
       end
       subgraph NSS["cm-staff"]
         BW["backoffice-web"]:::prop
@@ -463,7 +773,9 @@ flowchart TB
         OAD["ocr-adapter"]:::prop
         BAD["bureau-adapter"]:::prop
         KAD["kyc-adapter"]:::prop
-        NAD["notification-adapter"]:::prop
+        NAD["notification-adapter<br/>email, SMS"]:::prop
+        CMA["customer-master-adapter<br/>optional"]:::prop
+        LXA["lixi-adapter, later"]:::prop
       end
       subgraph NSM["cm-models, optional"]
         GPU["self-hosted-model<br/>GPU nodes"]:::prop
@@ -487,6 +799,8 @@ flowchart TB
 
     subgraph PLAT["Lender platform services"]
       IDP["Staff identity provider"]:::ext
+      CIDP["Customer identity provider<br/>optional"]:::ext
+      CBS["Core banking or CRM<br/>optional"]:::ext
       KMS["KMS or HSM,<br/>secrets manager"]:::ext
       OBS["Monitoring and SIEM"]:::ext
       DST["Downstream systems<br/>and event platform"]:::ext
@@ -498,6 +812,10 @@ flowchart TB
   EXP["OCR, bureau, KYC,<br/>notification providers"]:::ext
 
   NET --> WAF
+  PNET --> PTLB --> PTG
+  PTG --> API
+  PTG -->|"LIXI2"| LXA
+  IDB -.-> CIDP
   CBK -.->|"signed or mTLS"| WAF
   WAF --> PW --> PGW
   WAF --> PGW
@@ -528,6 +846,7 @@ flowchart TB
   EGR -.->|"or via lender"| LGW
   LGW -.-> EXP
   EGR --> DST
+  EGR -.->|"customer master"| CBS
   OTL -.-> OBS
 
   classDef data fill:#fef9c3,stroke:#a16207,color:#111827
@@ -543,12 +862,13 @@ A-16 calls for a few deployables with enforced module boundaries, rather than on
 
 | Deployable | Contains | Scales on | Proposed minimum replicas |
 |---|---|---|---|
-| portal-web | Applicant and Broker Portal | Requests | 2 |
+| portal-web | Applicant and Broker Portals, on separate host names | Requests | 2 |
 | backoffice-web | Back-office Web App | Requests | 2 |
-| public-gateway | API Gateway for portal and partner API | Requests | 2 |
+| public-gateway | API Gateway for the applicant and broker portals, including the applicant access API and upload streaming | Requests | 2 |
+| partner-gateway | API Gateway for partner systems: mTLS, client credentials, partner quotas (A-37) | Requests | 2 |
 | staff-gateway | API Gateway for staff | Requests | 2 |
-| identity-broker | Staff federation, external realm | Sign-ins | 2 |
-| core-api | Application and Case, Disclosure and Consent, Document, Metadata, Human Review, Configuration and Governance, Agent Registry, Prompt and Model Registry, Metering, Retention Hooks API, authorization | Requests | 3 |
+| identity-broker | Staff federation, external realm, optional customer IdP federation | Sign-ins | 2 |
+| core-api | Intake, Applicant Access, Customer Registry, Application and Case, Disclosure and Consent, Document, Metadata, Human Review, Configuration and Governance, Agent Registry, Prompt and Model Registry, Metering, Retention Hooks API, authorization | Requests | 3 |
 | core-worker | Workflow activities, Rules engine, outbox relay, Handoff, purge and export jobs | Queue depth | 3 |
 | workflow-engine | Workflow Orchestrator (ADR-004) | Workflow rate | 3 |
 | ledger-service | Evidence Ledger, with its own database role | Writes | 2 |
@@ -558,13 +878,15 @@ A-16 calls for a few deployables with enforced module boundaries, rather than on
 | ocr-adapter | Adapter for one OCR provider or engine | Calls in flight | 2 |
 | bureau-adapter | Adapter for one credit bureau | Calls in flight | 2 |
 | kyc-adapter | Adapter for one DVS or KYC provider. Omitted if checks are manual | Calls in flight | 2 |
-| notification-adapter | Adapter for one notification provider | Calls in flight | 2 |
+| notification-adapter | Adapter for one email or SMS provider | Calls in flight | 2 |
+| customer-master-adapter | Adapter for the lender's core banking or CRM. Omitted in built-in mode | Calls in flight | 2 if used |
+| lixi-adapter | LIXI2 parsing and mapping, isolated (T25). Later phase | Messages | 2 if used |
 | document-sandbox | Malware scan, rendering, forensics | Queue depth | 2 |
 | self-hosted-model | Optional local model serving | GPU capacity | 2 if used |
 | egress-proxy | Outbound allow-list | Connections | 2 |
 | telemetry-collector | OpenTelemetry collection and scrubbing | Volume | 2 |
 
-The four adapters share one chart template. Deploy one instance per provider in use, including any later third-party fraud provider (D-18). They are extensions (draft section 20), not new core services.
+The adapters share one chart template. Deploy one instance per provider in use, including any later third-party fraud provider (D-18). They are extensions (draft section 20), not new core services.
 
 Replica counts provide redundancy only. They are not sizing, which needs the 5x load test (A-33).
 
@@ -575,23 +897,28 @@ Anything not listed is denied, apart from cluster DNS.
 | From | To | Proposed protocol | Purpose |
 |---|---|---|---|
 | Public load balancer | portal-web, public-gateway, identity-broker (external realm) | HTTPS | External traffic and sign-in |
+| Partner load balancer | partner-gateway | HTTPS with client mTLS | Partner submissions, documents and status |
+| partner-gateway | core-api, identity-broker, lixi-adapter | HTTPS with mTLS | Canonical intake, token keys, LIXI2 mapping |
+| lixi-adapter | core-api | HTTPS with mTLS | Mapped canonical submissions |
+| public-gateway, partner-gateway | Staging store | S3 API over HTTPS, write-only | Upload streaming to quarantine (A-40) |
 | Private load balancer | backoffice-web, staff-gateway, identity-broker (staff realm) | HTTPS | Staff traffic and sign-in |
 | portal-web | public-gateway | HTTPS | Portal API |
 | backoffice-web | staff-gateway | HTTPS | Staff API |
 | public-gateway, staff-gateway | core-api, identity-broker | HTTPS with mTLS | APIs and token keys |
-| identity-broker | Staff identity provider | SAML 2.0 or OIDC over HTTPS | Federation |
+| identity-broker | Staff identity provider, customer identity provider (optional) | SAML 2.0 or OIDC over HTTPS | Federation |
 | identity-broker, workflow-engine | Their own databases | PostgreSQL with TLS | State |
 | core-api | workflow-engine, ledger-service | gRPC or HTTPS with mTLS | Business operations |
 | core-api, core-worker | PostgreSQL | PostgreSQL with TLS | Module schemas, outbox |
 | core-api, core-worker | Object and staging stores | S3 API over HTTPS | Documents, export, purge |
 | core-worker | workflow-engine, core-api, ledger-service, agent-worker, tool-broker | gRPC or HTTPS with mTLS | Workflow steps. Workers poll the engine |
-| core-worker | egress-proxy | HTTPS, Kafka protocol with TLS | Handoff |
+| core-worker | egress-proxy | HTTPS, Kafka protocol with TLS | Handoff, signed partner webhooks |
 | ledger-service | PostgreSQL, object store | PostgreSQL with TLS, S3 API | Ledger and anchors |
 | agent-worker | ai-gateway, tool-broker, core-api, ledger-service | gRPC or HTTPS with mTLS | Agent tasks |
 | ai-gateway | core-api, ledger-service, self-hosted-model | gRPC or HTTPS with mTLS | Registries, metering, local models |
 | ai-gateway | egress-proxy | HTTPS | Models |
 | tool-broker | ocr-adapter, bureau-adapter, kyc-adapter, notification-adapter | gRPC or HTTPS with mTLS | Provider calls |
-| ocr-adapter, bureau-adapter, kyc-adapter, notification-adapter | egress-proxy | HTTPS, or the protocol the provider requires, with encryption | Each adapter reaches only its own destination |
+| core-api, core-worker | notification-adapter, customer-master-adapter | gRPC or HTTPS with mTLS | Links, reminders, customer search and handoff acknowledgement |
+| ocr-adapter, bureau-adapter, kyc-adapter, notification-adapter, customer-master-adapter | egress-proxy | HTTPS, or the protocol the provider requires, with encryption | Each adapter reaches only its own destination |
 | Public load balancer | public-gateway, separate callback route | HTTPS, signed or mTLS | Provider callbacks, off by default |
 | Private load balancer | staff-gateway, separate callback route | HTTPS, signed or mTLS | Callbacks relayed by a lender gateway, off by default |
 | public-gateway, staff-gateway | Adapters with callbacks enabled | HTTPS with mTLS | Callback delivery |
@@ -719,6 +1046,113 @@ The vendor does not push into lender environments.
 
 Managed service names are examples and have not been validated for this product.
 
+### 3D. Trust zones and internet boundaries
+
+Each audience enters through its own edge, gateway and identity realm (A-36). Draft section 27.15 has the controls per zone.
+
+[Open as image](diagrams/3d-trust-zones.png)
+
+<!-- diagram: 3d-trust-zones -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'clusterBkg':'#f8fafc','clusterBorder':'#94a3b8','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'subGraphTitleMargin':{'top':6,'bottom':22}}}}%%
+flowchart TB
+  subgraph Z1["Z1 Internet: applicants"]
+    AP["Applicant browser<br/>or mobile app"]:::human
+  end
+  subgraph Z2["Z2 Internet: brokers"]
+    BRW["Broker browser<br/>MFA"]:::human
+  end
+  subgraph Z3["Z3 Partner B2B"]
+    PS["Broker CRM, aggregator,<br/>LIXI platform, dealer"]:::ext
+  end
+  subgraph Z4["Z4 Lender network or ZTNA"]
+    ST["Staff and branch RMs"]:::human
+  end
+
+  subgraph EDGEZ["Edge, lender environment"]
+    WAF["WAF and bot protection<br/>public load balancer"]:::ext
+    PLB2["Partner load balancer<br/>mTLS termination"]:::prop
+    PRV["Private load balancer"]:::ext
+  end
+
+  subgraph GWZ["Gateways and identity, no data credentials"]
+    PUBG["public-gateway<br/>applicant and broker hosts"]:::prop
+    PARG["partner-gateway<br/>OAuth client credentials"]:::prop
+    STG["staff-gateway"]:::prop
+    IDX["identity-broker<br/>external realm"]:::prop
+    IDS["identity-broker<br/>staff realm"]:::prop
+  end
+
+  subgraph Z5["Z5 Application core"]
+    CORE["core-api: intake, access,<br/>registry, application"]:::core
+    WORK["core-worker, agents,<br/>tool-broker, adapters"]:::core
+  end
+
+  subgraph Z6["Z6 Data, never internet-reachable"]
+    QS[("Staging and quarantine")]:::data
+    DBS[("Database, ledger,<br/>repository")]:::data
+  end
+
+  subgraph Z7["Z7 Outbound"]
+    EGR["egress-proxy<br/>allow-list"]:::prop
+    MSG["Email and SMS providers"]:::ext
+    PRV2["Bureau, DVS/KYC, OCR,<br/>model providers"]:::ext
+    CBS["Core banking or CRM<br/>customer master"]:::ext
+    HOOK["Partner webhooks<br/>signed"]:::ext
+  end
+
+  subgraph Z8["Z8 Federation"]
+    SIDP["Lender staff IdP"]:::ext
+    CIDP["Lender customer IdP<br/>internet banking"]:::open
+  end
+
+  AP --> WAF
+  BRW --> WAF
+  PS --> PLB2
+  ST --> PRV
+  WAF --> PUBG
+  WAF --> IDX
+  PLB2 --> PARG
+  PRV --> STG
+  PRV --> IDS
+  IDX -.-> CIDP
+  IDS -.-> SIDP
+  PUBG -->|"mTLS"| CORE
+  PARG -->|"mTLS"| CORE
+  STG -->|"mTLS"| CORE
+  PUBG -->|"upload stream"| QS
+  PARG -->|"upload stream"| QS
+  CORE --> DBS
+  CORE --> QS
+  WORK --> DBS
+  WORK --> EGR
+  EGR --> MSG
+  EGR --> PRV2
+  EGR --> CBS
+  EGR --> HOOK
+
+  classDef core fill:#dbeafe,stroke:#1d4ed8,color:#111827
+  classDef human fill:#dcfce7,stroke:#15803d,color:#111827
+  classDef data fill:#fef9c3,stroke:#a16207,color:#111827
+  classDef ext fill:#e5e7eb,stroke:#4b5563,color:#111827
+  classDef prop fill:#fff7ed,stroke:#c2410c,color:#111827,stroke-dasharray:6 4
+  classDef open fill:#fee2e2,stroke:#b91c1c,color:#111827,stroke-dasharray:2 3
+```
+
+The gateways write uploads to quarantine through a write-only, size-limited path; they cannot read the repository or database (A-40). Customer IdP federation is open until OQ-17 is answered.
+
+| Boundary | Crossing | Control |
+|---|---|---|
+| Z1 or Z2 to edge | HTTPS from the internet | WAF, bot protection, TLS 1.2+, HSTS, per-host rate limits |
+| Z3 to edge | HTTPS from registered partners | mTLS client certificate, IP allow-list where possible, per-client quotas |
+| Z4 to edge | Lender network or zero-trust access | Private load balancer, lender device and network policy |
+| Edge to gateways | Inside the cluster | Separate host names and gateway policies per zone |
+| Gateways to core | mTLS | Token validated, principal type checked against route (applicant, broker, partner, staff) |
+| Gateways to quarantine | Write-only upload stream | Size and type limits, quota per link and application |
+| Core to data | Private connections | Workload identity, encryption with lender keys |
+| Core to outbound | egress-proxy only | Destination allow-list, minimum data, AU processing |
+| Identity to federation | Redirects and back-channel | Signed assertions or tokens, audience and replay checks |
+
 ---
 
 ## 4. Design gaps found while drawing
@@ -738,3 +1172,9 @@ These are not decided. They need an answer or an ADR.
 | DG-09 | v0.1 put all adapters in the Tool Broker. Draft section 20 packages them separately or in an adapter host, while section 5 has the broker inject secrets | Deploy one adapter per provider, holding only its own credentials. Shown in v0.2. Confirm against A-16 by ADR and align draft section 5 | 2A, 3A, draft sections 5 and 20 |
 | DG-10 | The draft has no inbound path for asynchronous provider results | Poll by default, with a verified callback route only where required. Shown in v0.2. Confirm by ADR | 3A, security design |
 | DG-11 | A lender may require provider calls to use its ESB or API gateway, which hides retries, final destination and logging | Support it as an adapter destination behind the Tool Broker, with lender confirmation of all three. Shown in v0.2 | 1, 2B, 3A, A-30, D-31 |
+| DG-12 | The draft had one public gateway for applicants, brokers and partner systems | Add a separate partner-gateway and partner load balancer with mTLS. Shown in v0.3. Confirm by ADR-030 | 3A, 3D |
+| DG-13 | Gateways need to stream uploads to quarantine, but A-36 forbids storage credentials at the edge | Give gateways a write-only, size-limited credential for the staging prefix only, or a small upload-receiver service in Z5 | 3A, 3D, A-40 |
+| DG-14 | Branch-assisted consent needs the applicant's own code on a staff device | Show a separate applicant screen or the applicant's own phone. Confirm the user experience with the lender | 2G, D-46 |
+| DG-15 | Customer IdP federation and pre-fill depend on what the lender's internet banking supports | Make it optional and fall back to the new-applicant path (2H) | 2H, OQ-17 |
+| DG-16 | LIXI2 support for attachments and status is unconfirmed | Keep the lixi-adapter optional; brokers use the portal until OQ-15 is answered | 2E, 3A, D-55 |
+| DG-17 | In external mode the customer ID often exists only after handoff, so pre-decision checks cannot use it | Use the CustomerLink and external reference before handoff, and the returned ID after | 2J, D-53 |

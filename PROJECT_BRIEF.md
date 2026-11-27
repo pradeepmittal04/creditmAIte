@@ -1,7 +1,7 @@
 # CreditMate – Project Brief and Handoff Document
 
-> Status: Phase 1 (Requirement Interrogation) complete for round 1; round 2 and architecture-review questions answered or deferred; assumptions A-01..A-35 accepted on 2026-11-22 (D-44). Ready for detailed design.
-> Last updated: 2026-11-22
+> Status: Phase 1 (Requirement Interrogation) complete for round 1; round 2 and architecture-review questions answered or deferred; assumptions A-01..A-35 accepted on 2026-11-22 (D-44). Origination channels, customer identity and product extensibility decided on 2026-11-27 (D-45..D-56, A-36..A-44). Ready for detailed design.
+> Last updated: 2026-11-27
 > Audience: any AI agent or human architect continuing this work. This file is self-contained.
 
 ---
@@ -13,7 +13,7 @@
 3. When you make a design choice that depends on an unresolved question, record it as an assumption with an ID and flag it.
 4. Keep every design decision traceable: add an ADR entry (section 11) for each significant choice.
 5. Regulatory notes in this document are not legal advice and are unverified. Mark any regulatory claim as "to be confirmed with counsel".
-6. Current deliverable pointers: `ARCHITECTURE_DRAFT.md` (v0.4 draft, built on this brief).
+6. Current deliverable pointers: `ARCHITECTURE_DRAFT.md` (v0.5 draft, built on this brief; section 27 covers channels and intake), `ARCHITECTURE_DIAGRAMS.md` (v0.3) and `DOMAIN_MODEL.md` (v0.3).
 7. Style expected by the user: concise, challenge assumptions, explain why, call out vendor lock-in risk.
 
 ### Role to adopt
@@ -29,8 +29,9 @@ This is a **commercial software product**, not a one-off application. Optimise f
 | Item | Value |
 |---|---|
 | Working name | CreditMate |
-| Product | Agentic-AI Unsecured Loan (Personal Loan) Origination and Assessment Platform |
-| Scope | Complete Loan Origination System (LOS), starting with personal loans |
+| Product | Agentic-AI Credit Origination and Assessment Platform, launching with unsecured personal loans |
+| Scope | Complete Loan Origination System (LOS). Personal loans first, credit cards next, then vehicle and home loans, all through product configuration (D-54, D-56) |
+| Origination channels | Broker (portal, partner API, later LIXI2), lender branch or relationship manager (RM), and direct web and mobile (D-45) |
 | Target customers | Australian non-bank lenders (small to medium) at launch; banks later (D-43) |
 | Primary users | Back-office loan staff: Indexers, Assessors, Business (BA) Admins, Technical Support |
 | Goals | Faster decisions, lower operating cost, better auditability |
@@ -137,6 +138,18 @@ Each area is tagged with its status for this product. "P1" = Phase 1, "P2" = Pha
 | D-42 | Maker-checker on lending decisions is configurable by lender rule (e.g. amount, risk, fraud signal, override). A maker can never be their own checker | Assumption review, Q-06 |
 | D-43 | Launch market remains non-bank lenders (D-01); the design must not block APRA-regulated banks later | Assumption review, Q-07 |
 | D-44 | Assumptions A-01..A-35 are accepted with the user's updates and the recommended amendments | Assumption review, Q-04 |
+| D-45 | Every origination route (broker, branch or RM, direct web and mobile, and later dealer or partner) feeds one canonical intake. Each application records its channel, originating organisation and originating user | Channel review, 2026-11-27 |
+| D-46 | The applicant gives privacy and credit-check consent personally, never through a broker or RM. No bureau enquiry, DVS/KYC check or AI processing of applicant data runs before it. Until then the application is `AwaitingApplicantConsent`. Extends A-29 | Channel review |
+| D-47 | A secure applicant link opens only after a one-time code sent to the applicant's mobile. It is scoped to one application and one party, expires, can be reissued by the broker or RM, is cancelled on withdrawal or decision, and triggers reminders. An application with outstanding items is proposed for lapse after a configurable period, and a human confirms it (A-26) | Channel review |
+| D-48 | Required documents come from a policy-driven checklist per product and applicant. Assessors can raise further document requests at any time through the same link. Each joint applicant gets their own link and gives their own consent | Channel review |
+| D-49 | Identity verification is document-based on every route. At a branch the RM records which original document they sighted, and its details still pass the electronic check that the lender's AML/CTF program requires. A sighting alone never sets a verified outcome. Refines D-26 | Channel review |
+| D-50 | The person who originates an application (broker user or RM) can never be its maker or checker. Extends D-42 | Channel review |
+| D-51 | Direct applicants can start without an account. Email or mobile is verified by one-time code, and the account is created at save or submit. Existing lender customers may sign in through the lender's customer identity provider (internet banking) and receive pre-filled data | Channel review |
+| D-52 | Possible duplicate applications across routes are detected and sent for human review. They are never merged or closed automatically | Channel review |
+| D-53 | Customer identity is a pluggable Customer Registry with three installation modes: external master (core banking or CRM), built-in registry, and hybrid. Intake creates an application-scoped prospect, and a weak match is never merged automatically. Resolves DM-07 | Channel review |
+| D-54 | Credit products are defined as versioned configuration: type, secured or unsecured, term or revolving credit, collateral schema, document checklist, rule set, workflow, agent set, affordability method and handoff mapping. The data model includes Originator and Collateral from the first release | Channel review |
+| D-55 | Broker documents arrive in stages: broker portal upload in Phase 1, then a partner API document endpoint, then a LIXI2 inbound adapter at the edge. LIXI is mapped to the canonical intake and never becomes the internal model | Channel review |
+| D-56 | Phase 1 delivers personal loans only. Credit cards are the next product and must be addable mainly by configuration, plus card-specific rules and handoff. Vehicle and home loans follow | Channel review |
 
 ---
 
@@ -181,6 +194,15 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | A-33 | Load-test at five times the average working-hour rate | D-36 | Accepted |
 | A-34 | The first release ships REST, Kafka-compatible and webhook handoff channels and can send every final outcome (approved, declined, withdrawn) | D-37 | Accepted |
 | A-35 | The reference policy is inactive in production until the lender's BA Admins review and approve it | Reconciles D-38 with D-05 and D-33 | Accepted |
+| A-36 | Internet trust zones are separated. Applicant and broker browsers, partner systems (B2B), staff and branch networks, and outbound providers each enter or leave through their own edge, gateway and identity realm. No internet-facing component holds repository, database or provider credentials | Channel review; extends DG-07 | Proposed |
+| A-37 | Partner systems (broker CRMs, aggregators, LIXI gateways) authenticate as machine clients with mTLS and OAuth 2.0 client credentials, registered per originator organisation. A partner can act only for the brokers it is registered for | D-45, D-55 | Proposed |
+| A-38 | Emails and SMS carry no personal or application data beyond the applicant's first name, a non-guessable link and the lender's contact details. The application number shown to brokers and applicants is a reference, never an access credential | D-47; email is an untrusted channel | Proposed |
+| A-39 | Link and lapse settings are configuration with reference values: link valid for 7 days, reminders on days 2, 5 and 7, one-time code valid for 10 minutes with 5 attempts, lapse proposed 30 days after the last outstanding request. The lender approves them before production (A-35) | D-47 | Proposed |
+| A-40 | Applicant and broker uploads stream through the public gateway into the quarantined staging store. The document repository is never reachable from the internet, and no pre-signed repository URL is issued to an external party | D-47, A-28, DG-03 | Proposed |
+| A-41 | Branch and RM users are lender staff in the staff realm with an Originator role. Branch devices reach the back office over the lender's private network or zero-trust access, never through the public portal | D-45, D-50 | Proposed |
+| A-42 | In built-in registry mode CreditMate is the system of record for customer identity. It must support access and correction requests (APPs 12 and 13) and data-quality controls. It is not a full CRM | D-53 | Proposed |
+| A-43 | Matching uses configurable deterministic rules first: lender customer number, verified identity document, or verified contact plus date of birth. Probabilistic scores only propose a match for human confirmation | D-52, D-53 | Proposed |
+| A-44 | The canonical credit request supports term credit (amount and term) and revolving credit (limit) from the first release, so credit cards need no schema migration | D-54, D-56 | Proposed |
 
 ---
 
@@ -198,6 +220,10 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | C-08 | Document-forensics fraud checks produce false positives; fabricated documents are increasing | Mitigated by A-04 and D-40; third-party provider kept pluggable |
 | C-09 | The stated scale is small; avoid over-engineering | Mitigated by A-16; scale and SaaS readiness are required by D-36 |
 | C-10 | Single-tenant per customer means many installations; release/upgrade tooling becomes critical | Open (design) |
+| C-11 | Brokers submit on the applicant's behalf but cannot consent for them, so bureau and AI work must wait for the applicant | Resolved by D-46 |
+| C-12 | An emailed link is a bearer credential that can be forwarded or phished | Mitigated by D-47 and A-38 |
+| C-13 | "Create a customer ID" assumes CreditMate is the customer master, which is not true for lenders with core banking | Resolved by D-53 |
+| C-14 | Broker platforms vary in what they send, and LIXI2 attachment support is unconfirmed | Staged by D-55; open as OQ-15 |
 
 ---
 
@@ -258,13 +284,37 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | OP-03 | Source of realistic test documents, including tampered samples for fraud screening | Before agent evaluation |
 | OP-04 | Document sources and ownership of originals (OQ-R13) | Before repository adapters beyond S3 |
 
+### 8.6 Channel review (answered on 2026-11-27)
+
+| ID | Area | Question | Decision/status |
+|---|---|---|---|
+| Q-08 | Channels | Which origination routes must be supported? | Broker, branch or RM, and direct web and mobile; dealer and partner later (D-45) |
+| Q-09 | Consent | Can a broker consent for the applicant? | No; the applicant consents personally (D-46) |
+| Q-10 | Identity | Does sighting at a branch verify identity? | No. The sighting is recorded, but verification is document-based (D-49) |
+| Q-11 | Customer | Who is the customer master? | Configurable: external, built-in or hybrid (D-53) |
+| Q-12 | Broker | How do broker documents arrive? | Portal first, then partner API, then LIXI2 (D-55) |
+| Q-13 | Product | Are credit cards in Phase 1? | Personal loans first, cards next, by configuration (D-56) |
+
+### 8.7 New open questions
+
+| ID | Item | Needed by |
+|---|---|---|
+| OQ-15 | Confirm the LIXI2 version, message types and supporting-document support with the main broker platforms and aggregators, and confirm LIXI licensing | Before the LIXI adapter |
+| OQ-16 | Which email and SMS providers process data in Australia, and does the lender need its own sender domain and SMS sender ID? | Before secure links go live |
+| OQ-17 | Does the lender's customer identity provider (internet banking) support OIDC federation, and which claims can be used for pre-fill? | Before existing-customer sign-in |
+| OQ-18 | Who maintains the broker register and accreditation, and is it fed from the lender's CRM or an aggregator? | Before broker onboarding |
+| OQ-19 | Under the lender's AML/CTF program, which electronic and document-based methods are acceptable for each channel? | Before identity rules are activated |
+
 ---
 
 ## 9. Regulatory notes (Australia; unverified, confirm with counsel)
 
 - National Consumer Credit Protection Act 2009 (NCCP): responsible-lending obligations for credit licensees (reasonable inquiries about requirements and objectives, verifying financial situation, assessing unsuitability). ASIC Regulatory Guide 209 provides guidance.
 - Credit licensing (ACL), AFCA membership and complaint handling for consumer lending.
-- AML/CTF Act 2006 (AUSTRAC): customer identification and record keeping. Recent reforms affect scope; confirm applicability.
+- AML/CTF Act 2006 (AUSTRAC): customer identification and record keeping. Recent reforms affect scope; confirm applicability. The lender's AML/CTF program decides which document-based and electronic verification methods apply to each channel (D-49).
+- Brokers (credit assistance providers) hold their own ACL or are credit representatives, with their own responsible-lending duties. Mortgage brokers also owe a best-interests duty. None of this transfers the lender's own obligations to the broker, and RG 209 expects lenders to monitor applications from third parties (RL-13 in `REFERENCE_POLICY.md`).
+- Credit cards: affordability is assessed on the consumer's ability to repay the credit limit within a period set by regulation (understood to be 3 years), and unsolicited limit-increase offers are prohibited. Confirm before the card product is configured.
+- Secured products add security registration (PPSR for motor vehicles), valuation and, for home loans, mortgage registration and settlement. These are later products (D-56).
 - Privacy Act 1988 and Australian Privacy Principles; Privacy (Credit Reporting) Code for bureau data; Notifiable Data Breaches scheme.
 - Automated decision-making transparency obligations introduced by the Privacy and Other Legislation Amendment Act 2024, expected to commence December 2026 (confirm date and applicability).
 - Small-amount and medium-amount credit contract rules may apply depending on loan size and term.
@@ -292,6 +342,15 @@ Status key: **Accepted** = confirmed by the user (D-44). **Amended** = accepted 
 | DVS | Document Verification Service (AU identity document verification) |
 | CDR | Consumer Data Right (AU open banking framework) |
 | Maker-checker | Control where one person submits (maker) and a different person approves (checker) |
+| Originator | The organisation and user that brought an application in: broker firm and broker, lender branch and RM, the direct channel, or later a dealer or partner |
+| RM | Relationship manager: lender staff who capture applications for customers, usually at a branch |
+| Aggregator | Organisation that provides accreditation, software and lender panels to many broker firms |
+| LIXI2 | Lending Industry XML Initiative data standard for Australian lending, used by broker platforms |
+| Customer master | The system of record for customer identity, usually core banking or a CRM |
+| Prospect | An applicant not yet confirmed as an existing or new customer of the lender |
+| Secure link | Single-application, expiring link that opens the applicant's consent and upload pages after a one-time code |
+| OTP | One-time passcode sent to a verified mobile or email |
+| PPSR | Personal Property Securities Register, where security over vehicles is registered |
 
 ---
 
@@ -304,7 +363,7 @@ ADRs are tracked in `ARCHITECTURE_DRAFT.md` section 22. Add new records there an
 ## 12. Work plan for the next agent
 
 1. **Track open items.** Sections 8.1 to 8.4 are answered or assumed; section 8.5 lists what is still open.
-2. **Review and refine** `ARCHITECTURE_DRAFT.md` (v0.4). Check it against decisions D-01..D-44 and assumptions A-01..A-35.
+2. **Review and refine** `ARCHITECTURE_DRAFT.md` (v0.5). Check it against decisions D-01..D-56 and assumptions A-01..A-44, and confirm or amend the proposed assumptions A-36..A-44.
 3. **Produce detailed design artefacts**, in this order:
    - Domain model and metadata schema (ERD)
    - Agent contract and registry specification
